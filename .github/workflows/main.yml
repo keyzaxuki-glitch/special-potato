@@ -84,9 +84,9 @@ jobs:
           pmbootstrap config kernel joyeuse
           pmbootstrap config ui "$UI"
           pmbootstrap config boot_size 256
-          pmbootstrap config hostname redmi
-          pmbootstrap config user user
-          pmbootstrap config systemd true || true
+          pmbootstrap config hostname knaxu
+          pmbootstrap config user keyza
+          pmbootstrap config systemd always || true
           pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,wpa_supplicant,nano,htop"
           pmbootstrap config
 
