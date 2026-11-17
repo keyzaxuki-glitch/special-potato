@@ -158,12 +158,9 @@ jobs:
           zstd -T0 -9 --rm xiaomi-miatoll-root.img
           sha256sum * > SHA256SUMS
           ls -la
-
-      - name: Upload ke release
-        env:
-          GH_TOKEN: $({ github.token })
-        run: |
-          gh release create "pmos-$(date +%Y%m%d-%H%M)" out/* \
-            --repo "$GITHUB_REPOSITORY" \
-            --title "pmOs miatoll headless"
-            --notes "Build headless"
+      - name: Upload ke Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: pmos-${{ github.run_number }}
+          name: pmOS miatoll headless
+          files: out/*
