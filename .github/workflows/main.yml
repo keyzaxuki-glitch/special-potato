@@ -86,7 +86,7 @@ jobs:
           pmbootstrap config boot_size 256
           pmbootstrap config hostname redmi
           pmbootstrap config user user
-          pmbootstrap config systemd never || true
+          pmbootstrap config systemd true || true
           pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,wpa_supplicant,nano,htop"
           pmbootstrap config
 
@@ -110,7 +110,7 @@ jobs:
           sudo cat "$f"
           sudo umount /mnt/b
 
-      - name: Siapkan rootfs (Wi-Fi, SSH, headless)
+      - name: Siapkan rootfs (Wi-Fi, SSH, Ubuntu chroot)
         run: |
           R=/mnt/r
           sudo mkdir -p $R
@@ -118,17 +118,32 @@ jobs:
           echo "Unit systemd yang tersedia:"
           ls $R/usr/lib/systemd/system 2>/dev/null | grep -iE 'ssh|networkmanager|wpa' || true
 
+          # SSH: host key dibuat saat build, unit sendiri menimpa bawaan
+          sudo mkdir -p $R/etc/ssh $R/var/empty $R/etc/systemd/system/multi-user.target.wants
+          sudo ssh-keygen -A -f $R
+          sudo tee $R/etc/systemd/system/sshd.service >/dev/null <<'EOF'
+          [Unit]
+          Description=OpenSSH server
+          After=network.target
+
+          [Service]
+          ExecStart=/usr/sbin/sshd -D
+          Restart=always
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          sudo ln -sf /etc/systemd/system/sshd.service $R/etc/systemd/system/multi-user.target.wants/sshd.service
+
           enable() {
             for d in usr/lib/systemd/system lib/systemd/system; do
               if [ -e "$R/$d/$1" ]; then
-                sudo mkdir -p $R/etc/systemd/system/multi-user.target.wants
                 sudo ln -sf "/$d/$1" "$R/etc/systemd/system/multi-user.target.wants/$1"
                 echo "enabled: $1"; return
               fi
             done
             echo "WARN: unit $1 tidak ditemukan"
           }
-          enable sshd.service
           enable NetworkManager.service
 
           if [ "$UI" = "none" ]; then
@@ -144,6 +159,35 @@ jobs:
             sudo chown root:root $D/wifi.nmconnection
             echo "Profil Wi-Fi ditulis."
           fi
+
+          # Ubuntu 24.04 chroot: dibangun di HP saat pertama dipakai
+          sudo mkdir -p $R/usr/local/bin
+          sudo tee $R/usr/local/bin/setup-ubuntu >/dev/null <<'EOF'
+          #!/bin/sh
+          set -e
+          U=/opt/ubuntu
+          apk add debootstrap perl binutils zstd xz wget ca-certificates
+          mkdir -p $U
+          debootstrap --arch=arm64 --variant=minbase --no-check-gpg noble $U http://ports.ubuntu.com/ubuntu-ports
+          cat > $U/etc/apt/sources.list <<'LIST'
+          deb http://ports.ubuntu.com/ubuntu-ports noble main universe
+          deb http://ports.ubuntu.com/ubuntu-ports noble-updates main universe
+          deb http://ports.ubuntu.com/ubuntu-ports noble-security main universe
+          LIST
+          echo "Selesai. Masuk dengan: sudo ubuntu"
+          EOF
+          sudo tee $R/usr/local/bin/ubuntu >/dev/null <<'EOF'
+          #!/bin/sh
+          U=/opt/ubuntu
+          [ -d $U/etc ] || { echo "Jalankan dulu: sudo setup-ubuntu"; exit 1; }
+          mountpoint -q $U/proc || mount -t proc proc $U/proc
+          mountpoint -q $U/sys || mount --bind /sys $U/sys
+          mountpoint -q $U/dev || mount --bind /dev $U/dev
+          mountpoint -q $U/dev/pts || mount --bind /dev/pts $U/dev/pts
+          cp /etc/resolv.conf $U/etc/resolv.conf
+          exec chroot $U /bin/bash -l
+          EOF
+          sudo chmod +x $R/usr/local/bin/setup-ubuntu $R/usr/local/bin/ubuntu
           sudo umount $R
 
       - name: Ambil U-Boot SM7125
