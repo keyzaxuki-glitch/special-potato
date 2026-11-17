@@ -72,10 +72,9 @@ jobs:
       - name: Konfigurasi pmbootstrap
         run: |
           W=$HOME/.local/var/pmbootstrap
-          mkdir -p "$W/cache_git"
-          git clone https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$W/cache_git/pmaports"
-          git -C "$W/cache_git/pmaports" checkout "$PMA_BRANCH"
-          printf '[pmbootstrap]\naports = %s/cache_git/pmaports\nwork = %s\ndevice = xiaomi-miatoll\n' "$W" "$W" > "$HOME/pmbootstrap.cfg"
+          git clone https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$HOME/pmaports"
+          git -C "$HOME/pmaports" checkout "$PMA_BRANCH"
+          printf '[pmbootstrap]\naports = %s/pmaports\nwork = %s\n' "$HOME" "$W" > "$HOME/pmbootstrap.cfg"
           pmbootstrap config device xiaomi-miatoll
           pmbootstrap config kernel joyeuse
           pmbootstrap config ui "$UI"
