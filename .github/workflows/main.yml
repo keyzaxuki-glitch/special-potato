@@ -86,7 +86,7 @@ jobs:
           pmbootstrap config boot_size 256
           pmbootstrap config hostname redmi
           pmbootstrap config user user
-          pmbootstrap config systemd always || true
+          pmbootstrap config systemd never || true
           pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,wpa_supplicant,nano,htop"
           pmbootstrap config
 
