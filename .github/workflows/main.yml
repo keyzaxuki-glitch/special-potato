@@ -1,25 +1,27 @@
 name: Build postmarketOS miatoll (headless)
 
-# Simpan file ini sebagai: .github/workflows/build.yml
-# Secrets yang dibutuhkan (Settings > Secrets and variables > Actions):
-#   PMOS_PASSWORD  (wajib)  password user "user"
-#   WIFI_SSID      (opsional) nama Wi-Fi supaya HP langsung konek saat boot
-#   WIFI_PSK       (opsional) password Wi-Fi
-# PERINGATAN: password Wi-Fi ikut tertanam di image. Pakai repo PRIVATE
-# dan hapus artifact setelah diunduh.
+# Required repository secret: PMOS_PASSWORD (password for login user: keyza).
+# Optional secrets: WIFI_SSID and WIFI_PSK. Leave WIFI_PSK empty for an open Wi-Fi network.
+# Wi-Fi credentials are stored inside the rootfs image: keep this repository private.
 
 on:
   workflow_dispatch:
     inputs:
       ui:
         description: "UI (none = headless)"
+        required: true
         default: "none"
+        type: string
       pmbootstrap_tag:
         description: "Versi pmbootstrap"
+        required: true
         default: "3.10.1"
+        type: string
       pmaports_branch:
         description: "Branch pmaports"
+        required: true
         default: "v25.12"
+        type: string
 
 jobs:
   build:
@@ -27,7 +29,7 @@ jobs:
     timeout-minutes: 150
     permissions:
       contents: write
-    
+
     env:
       PMOS_PASSWORD: ${{ secrets.PMOS_PASSWORD }}
       WIFI_SSID: ${{ secrets.WIFI_SSID }}
@@ -35,174 +37,398 @@ jobs:
       UI: ${{ inputs.ui }}
       PMB_TAG: ${{ inputs.pmbootstrap_tag }}
       PMA_BRANCH: ${{ inputs.pmaports_branch }}
+
     steps:
-      - name: Cek secret wajib
+      - name: Validate secrets
+        shell: bash
         run: |
-          if [ -z "$PMOS_PASSWORD" ]; then
-            echo "Isi secret PMOS_PASSWORD dulu."; exit 1
+          set -euo pipefail
+          if [[ -z "$PMOS_PASSWORD" ]]; then
+            echo "Set the PMOS_PASSWORD repository secret first."
+            exit 1
+          fi
+          if [[ -n "$WIFI_PSK" && -z "$WIFI_SSID" ]]; then
+            echo "WIFI_PSK is set but WIFI_SSID is empty. Set both, or clear WIFI_PSK for an open Wi-Fi network."
+            exit 1
           fi
 
-      - name: Kosongkan ruang disk
+      - name: Free runner disk space
         run: |
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           df -h /
 
-      - name: Pasang dependensi host
+      - name: Install host dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git openssl procps python3 zstd e2fsprogs uuid-runtime
+          sudo apt-get install -y git curl openssl procps python3 zstd e2fsprogs uuid-runtime
           sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
 
-      - name: Ambil pmbootstrap dan patch boot_size
+      - name: Fetch pmbootstrap and patch boot_size check
+        shell: bash
         run: |
+          set -euo pipefail
           git clone https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git
           cd pmbootstrap
           git checkout "$PMB_TAG" || git checkout "v$PMB_TAG"
-          f=$(grep -rl "def sanity_check_boot_size" pmb)
-          echo "Patch: $f"
+
+          f="$(grep -rl 'def sanity_check_boot_size' pmb | head -n 1)"
+          if [[ -z "$f" ]]; then
+            echo "Could not find sanity_check_boot_size() in this pmbootstrap version."
+            exit 1
+          fi
+          echo "Patching: $f"
           python3 - "$f" <<'PY'
-          import sys, re
-          p = sys.argv[1]
-          s = open(p).read()
-          m = re.search(r"def sanity_check_boot_size\([^)]*\)[^:]*:\n", s)
-          s = s[:m.end()] + "    return\n" + s[m.end():]
-          open(p, "w").write(s)
+          import pathlib
+          import re
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          source = path.read_text()
+          pattern = re.compile(r"(?m)^([ \t]*)def sanity_check_boot_size\b[^\n]*:\s*$")
+          match = pattern.search(source)
+          if not match:
+              raise SystemExit("sanity_check_boot_size() signature was not recognized")
+          body_start = match.end()
+          following = source[body_start:body_start + 180]
+          if "PMOS_ALLOW_SMALL_BOOT_SIZE" not in following:
+              indent = match.group(1) + "    "
+              source = (
+                  source[:body_start]
+                  + "\n" + indent + "# PMOS_ALLOW_SMALL_BOOT_SIZE: miatoll cache partition is smaller than 512 MiB\n"
+                  + indent + "return\n"
+                  + source[body_start:]
+              )
+              path.write_text(source)
           PY
-          printf '#!/bin/sh\nexec python3 %s/pmbootstrap.py --config %s/pmbootstrap.cfg "$@"\n' "$PWD" "$HOME" | sudo tee /usr/local/bin/pmbootstrap >/dev/null
+
+          printf '#!/bin/sh\nexec python3 "%s/pmbootstrap.py" --config "%s/pmbootstrap.cfg" "$@"\n' "$PWD" "$HOME" \
+            | sudo tee /usr/local/bin/pmbootstrap >/dev/null
           sudo chmod +x /usr/local/bin/pmbootstrap
           pmbootstrap --version
 
-      - name: Konfigurasi pmbootstrap
+      - name: Configure pmbootstrap
+        shell: bash
         run: |
-          W=$HOME/.local/var/pmbootstrap
+          set -euo pipefail
+          W="$HOME/.local/var/pmbootstrap"
           mkdir -p "$W"
           echo 8 > "$W/version"
+
           git clone https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$HOME/pmaports"
           git -C "$HOME/pmaports" checkout "$PMA_BRANCH"
           printf '[pmbootstrap]\naports = %s/pmaports\nwork = %s\n' "$HOME" "$W" > "$HOME/pmbootstrap.cfg"
+
           pmbootstrap config device xiaomi-miatoll
-          pmbootstrap config kernel joyeuse
+          # Do not set kernel=joyeuse: joyeuse is the phone variant, not a kernel package.
+          # The xiaomi-miatoll device package selects the SM7125 kernel and its firmware.
           pmbootstrap config ui "$UI"
+          pmbootstrap config service_manager systemd
           pmbootstrap config boot_size 256
           pmbootstrap config hostname knaxu
           pmbootstrap config user keyza
-          pmbootstrap config systemd always || true
-          pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,wpa_supplicant,nano,htop"
+          pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,networkmanager-systemd,dbus-systemd,wpa_supplicant,wireless-regdb,nano,htop"
           pmbootstrap config
 
-      - name: Bangun image
+      - name: Build image
+        shell: bash
         run: |
+          set -euo pipefail
           pmbootstrap -y install --split --password "$PMOS_PASSWORD"
           mkdir -p out
-          cp "$HOME/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs/xiaomi-miatoll-boot.img" out/
-          cp "$HOME/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs/xiaomi-miatoll-root.img" out/
+          ROOTFS_DIR="$HOME/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs"
+          cp "$ROOTFS_DIR/xiaomi-miatoll-boot.img" out/
+          cp "$ROOTFS_DIR/xiaomi-miatoll-root.img" out/
           ls -lh out
 
-      - name: Patch boot image (matikan Plymouth)
+      - name: Patch boot image (TTY status output)
+        shell: bash
         run: |
+          set -euo pipefail
           sudo mkdir -p /mnt/b
-          sudo mount -o loop out/xiaomi-miatoll-boot.img /mnt/b
-          f=$(sudo find /mnt/b -name 'pmos.conf' | head -1)
-          echo "Entry: $f"
-          sudo cat "$f"
-          sudo sed -i 's/quiet loglevel=2/plymouth.enable=0 console=tty0 systemd.show_status=true/' "$f"
-          echo "--- setelah patch ---"
+          sudo mount -o loop,rw out/xiaomi-miatoll-boot.img /mnt/b
+          trap 'sudo umount /mnt/b 2>/dev/null || true' EXIT
+
+          f="$(sudo find /mnt/b -path '*/loader/entries/pmos.conf' -o -name pmos.conf | head -n 1)"
+          if [[ -z "$f" ]]; then
+            echo "pmos.conf not found in boot image."
+            exit 1
+          fi
+          echo "Boot entry: $f"
+          sudo python3 - "$f" <<'PY'
+          import pathlib
+          import sys
+
+          path = pathlib.Path(sys.argv[1])
+          lines = path.read_text().splitlines()
+          changed = False
+          flags = [
+              "plymouth.enable=0",
+              "console=tty0",
+              "loglevel=7",
+              "systemd.show_status=1",
+              "systemd.log_level=info",
+          ]
+          output = []
+          for line in lines:
+              if line.lstrip().startswith("options "):
+                  indent = line[:len(line) - len(line.lstrip())]
+                  tokens = line.strip().split()[1:]
+                  tokens = [
+                      token for token in tokens
+                      if token != "quiet"
+                      and not token.startswith((
+                          "loglevel=", "plymouth.enable=", "console=",
+                          "systemd.show_status=", "systemd.log_level="
+                      ))
+                  ]
+                  line = indent + "options " + " ".join(tokens + flags)
+                  changed = True
+              output.append(line)
+          if not changed:
+              raise SystemExit("No kernel 'options' line found in pmos.conf")
+          path.write_text("\n".join(output) + "\n")
+          PY
+          echo "--- patched boot entry ---"
           sudo cat "$f"
           sudo umount /mnt/b
+          trap - EXIT
 
-      - name: Siapkan rootfs (Wi-Fi, SSH, Ubuntu chroot)
+      - name: Configure rootfs (Wi-Fi, SSH, TTY service list, Ubuntu chroot)
+        shell: bash
         run: |
+          set -euo pipefail
           R=/mnt/r
-          sudo mkdir -p $R
-          sudo mount -o loop out/xiaomi-miatoll-root.img $R
-          echo "Unit systemd yang tersedia:"
-          ls $R/usr/lib/systemd/system 2>/dev/null | grep -iE 'ssh|networkmanager|wpa' || true
+          sudo mkdir -p "$R"
+          sudo mount -o loop,rw out/xiaomi-miatoll-root.img "$R"
+          cleanup() { sudo umount "$R" 2>/dev/null || true; }
+          trap cleanup EXIT
 
-          # SSH: host key dibuat saat build, unit sendiri menimpa bawaan
-          sudo mkdir -p $R/etc/ssh $R/var/empty $R/etc/systemd/system/multi-user.target.wants
-          sudo ssh-keygen -A -f $R
-          sudo tee $R/etc/systemd/system/sshd.service >/dev/null <<'EOF'
+          echo "Systemd unit files found in rootfs:"
+          sudo find "$R/usr/lib/systemd/system" "$R/lib/systemd/system" -maxdepth 1 -type f \
+            \( -iname '*ssh*' -o -iname '*networkmanager*' -o -iname 'dbus*' -o -iname 'getty@.service' \) \
+            -print 2>/dev/null | sort || true
+
+          # SSH server unit. Host keys are generated on the phone at first boot,
+          # not baked into the image (so every installation gets unique keys).
+          sudo install -d -o root -g root -m 0755 "$R/etc/ssh" "$R/var/empty" \
+            "$R/etc/systemd/system/multi-user.target.wants"
+          sudo tee "$R/etc/ssh/sshd_config" >/dev/null <<'EOF'
+          Port 22
+          AddressFamily any
+          HostKey /etc/ssh/ssh_host_ed25519_key
+          HostKey /etc/ssh/ssh_host_ecdsa_key
+          HostKey /etc/ssh/ssh_host_rsa_key
+          PermitRootLogin no
+          PubkeyAuthentication yes
+          PasswordAuthentication yes
+          KbdInteractiveAuthentication no
+          X11Forwarding no
+          PrintMotd no
+          Subsystem sftp /usr/lib/ssh/sftp-server
+          EOF
+          sudo chmod 600 "$R/etc/ssh/sshd_config"
+          sudo chown root:root "$R/etc/ssh/sshd_config"
+
+          sudo tee "$R/etc/systemd/system/sshd.service" >/dev/null <<'EOF'
           [Unit]
           Description=OpenSSH server
           After=network.target
 
           [Service]
-          ExecStart=/usr/sbin/sshd -D
-          Restart=always
+          Type=simple
+          ExecStartPre=/usr/bin/ssh-keygen -A
+          ExecStartPre=/usr/sbin/sshd -t
+          ExecStart=/usr/sbin/sshd -D -e
+          Restart=on-failure
+          RestartSec=3
 
           [Install]
           WantedBy=multi-user.target
           EOF
-          sudo ln -sf /etc/systemd/system/sshd.service $R/etc/systemd/system/multi-user.target.wants/sshd.service
+          sudo ln -sfn /etc/systemd/system/sshd.service \
+            "$R/etc/systemd/system/multi-user.target.wants/sshd.service"
 
-          enable() {
+          # Enable units only if their real unit files are present in the image.
+          enable_unit() {
+            unit="$1"
+            target="$2"
             for d in usr/lib/systemd/system lib/systemd/system; do
-              if [ -e "$R/$d/$1" ]; then
-                sudo ln -sf "/$d/$1" "$R/etc/systemd/system/multi-user.target.wants/$1"
-                echo "enabled: $1"; return
+              if [[ -e "$R/$d/$unit" ]]; then
+                sudo mkdir -p "$R/etc/systemd/system/$target.wants"
+                sudo ln -sfn "/$d/$unit" "$R/etc/systemd/system/$target.wants/$unit"
+                echo "enabled: $unit"
+                return 0
               fi
             done
-            echo "WARN: unit $1 tidak ditemukan"
+            echo "not found (not enabled): $unit"
+            return 1
           }
-          enable NetworkManager.service
 
-          if [ "$UI" = "none" ]; then
-            sudo ln -sf /usr/lib/systemd/system/multi-user.target $R/etc/systemd/system/default.target
+          # This unit is supplied by networkmanager-systemd, explicitly installed above.
+          enable_unit NetworkManager.service multi-user.target || {
+            echo "ERROR: NetworkManager.service is missing. Check service_manager=systemd and networkmanager-systemd package."
+            exit 1
+          }
+          enable_unit dbus.service multi-user.target || true
+          enable_unit dbus.socket sockets.target || true
+
+          # Ensure a visible login console on tty1; this also runs the service-list profile.
+          for d in usr/lib/systemd/system lib/systemd/system; do
+            if [[ -e "$R/$d/getty@.service" ]]; then
+              sudo mkdir -p "$R/etc/systemd/system/getty.target.wants"
+              sudo ln -sfn "/$d/getty@.service" \
+                "$R/etc/systemd/system/getty.target.wants/getty@tty1.service"
+              echo "enabled: getty@tty1.service"
+              break
+            fi
+          done
+
+          # Headless default target.
+          if [[ "$UI" == "none" ]]; then
+            target=""
+            for d in usr/lib/systemd/system lib/systemd/system; do
+              if [[ -e "$R/$d/multi-user.target" ]]; then
+                target="/$d/multi-user.target"
+                break
+              fi
+            done
+            if [[ -z "$target" ]]; then
+              echo "ERROR: multi-user.target not found in rootfs."
+              exit 1
+            fi
+            sudo ln -sfn "$target" "$R/etc/systemd/system/default.target"
           fi
 
-          if [ -n "$WIFI_SSID" ]; then
-            D=$R/etc/NetworkManager/system-connections
-            sudo mkdir -p $D
-            printf '[connection]\nid=wifi\nuuid=%s\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=%s\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' \
-              "$(uuidgen)" "$WIFI_SSID" "$WIFI_PSK" | sudo tee $D/wifi.nmconnection >/dev/null
-            sudo chmod 600 $D/wifi.nmconnection
-            sudo chown root:root $D/wifi.nmconnection
-            echo "Profil Wi-Fi ditulis."
+          # Build a NetworkManager keyfile without putting SSID/PSK in the Actions log.
+          sudo env WIFI_SSID="$WIFI_SSID" WIFI_PSK="$WIFI_PSK" ROOTFS="$R" python3 - <<'PY'
+          import os
+          import pathlib
+          import re
+          import uuid
+
+          ssid = os.environ.get("WIFI_SSID", "")
+          psk = os.environ.get("WIFI_PSK", "")
+          rootfs = pathlib.Path(os.environ["ROOTFS"])
+
+          if not ssid:
+              print("WIFI_SSID is empty; skipping saved Wi-Fi profile.")
+          else:
+              if any(ord(ch) < 32 or ord(ch) == 127 for ch in ssid + psk):
+                  raise SystemExit("WIFI_SSID/WIFI_PSK must not contain control characters or newlines")
+              if len(ssid.encode("utf-8")) > 32:
+                  raise SystemExit("WIFI_SSID is longer than the 32-byte Wi-Fi SSID limit")
+              if psk and not (8 <= len(psk) <= 63 or re.fullmatch(r"[0-9a-fA-F]{64}", psk)):
+                  raise SystemExit("WIFI_PSK must be 8-63 characters, or 64 hexadecimal characters")
+
+              def escape_keyfile(value: str) -> str:
+                  value = value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                  if value.startswith(" "):
+                      value = "\\s" + value[1:]
+                  if value.endswith(" "):
+                      value = value[:-1] + "\\s"
+                  return value
+
+              lines = [
+                  "[connection]",
+                  "id=wifi-auto",
+                  f"uuid={uuid.uuid4()}",
+                  "type=wifi",
+                  "autoconnect=true",
+                  "autoconnect-priority=100",
+                  "",
+                  "[wifi]",
+                  "mode=infrastructure",
+                  f"ssid={escape_keyfile(ssid)}",
+              ]
+              if psk:
+                  lines += [
+                      "",
+                      "[wifi-security]",
+                      "key-mgmt=wpa-psk",
+                      f"psk={escape_keyfile(psk)}",
+                  ]
+              lines += ["", "[ipv4]", "method=auto", "", "[ipv6]", "method=auto", ""]
+
+              profile_dir = rootfs / "etc/NetworkManager/system-connections"
+              profile_dir.mkdir(parents=True, exist_ok=True)
+              profile = profile_dir / "wifi-auto.nmconnection"
+              profile.write_text("\n".join(lines))
+              profile.chmod(0o600)
+              print("Saved NetworkManager Wi-Fi profile (credentials are not printed).")
+          PY
+          if [[ -n "$WIFI_SSID" ]]; then
+            sudo chown root:root "$R/etc/NetworkManager/system-connections/wifi-auto.nmconnection"
           fi
 
-          # Ubuntu 24.04 chroot: dibangun di HP saat pertama dipakai
-          sudo mkdir -p $R/usr/local/bin
-          sudo tee $R/usr/local/bin/setup-ubuntu >/dev/null <<'EOF'
+          # Show loaded system services whenever a user logs in on the local tty1.
+          sudo install -d "$R/etc/profile.d"
+          sudo tee "$R/etc/profile.d/90-show-system-services.sh" >/dev/null <<'EOF'
+          #!/bin/sh
+          case "$-" in *i*) ;; *) return ;; esac
+          [ -t 1 ] || return
+          tty_name="$(tty 2>/dev/null || true)"
+          case "$tty_name" in /dev/tty1|/dev/console) ;; *) return ;; esac
+          command -v systemctl >/dev/null 2>&1 || return
+          printf '\n===== SYSTEMD: LOADED SERVICES =====\n'
+          systemctl list-units --type=service --all --state=loaded --no-pager --plain || true
+          printf '\n===== SYSTEMD: FAILED SERVICES =====\n'
+          systemctl --failed --no-pager --plain || true
+          printf '====================================\n\n'
+          EOF
+          sudo chmod 0644 "$R/etc/profile.d/90-show-system-services.sh"
+          sudo chown root:root "$R/etc/profile.d/90-show-system-services.sh"
+
+          # Optional Ubuntu 24.04 chroot helpers (created on first use on the phone).
+          sudo install -d "$R/usr/local/bin"
+          sudo tee "$R/usr/local/bin/setup-ubuntu" >/dev/null <<'EOF'
           #!/bin/sh
           set -e
           U=/opt/ubuntu
           apk add debootstrap perl binutils zstd xz wget ca-certificates
-          mkdir -p $U
-          debootstrap --arch=arm64 --variant=minbase --no-check-gpg noble $U http://ports.ubuntu.com/ubuntu-ports
-          cat > $U/etc/apt/sources.list <<'LIST'
+          mkdir -p "$U"
+          debootstrap --arch=arm64 --variant=minbase noble "$U" http://ports.ubuntu.com/ubuntu-ports
+          cat > "$U/etc/apt/sources.list" <<'LIST'
           deb http://ports.ubuntu.com/ubuntu-ports noble main universe
           deb http://ports.ubuntu.com/ubuntu-ports noble-updates main universe
           deb http://ports.ubuntu.com/ubuntu-ports noble-security main universe
           LIST
           echo "Selesai. Masuk dengan: sudo ubuntu"
           EOF
-          sudo tee $R/usr/local/bin/ubuntu >/dev/null <<'EOF'
+          sudo tee "$R/usr/local/bin/ubuntu" >/dev/null <<'EOF'
           #!/bin/sh
+          set -e
           U=/opt/ubuntu
-          [ -d $U/etc ] || { echo "Jalankan dulu: sudo setup-ubuntu"; exit 1; }
-          mountpoint -q $U/proc || mount -t proc proc $U/proc
-          mountpoint -q $U/sys || mount --bind /sys $U/sys
-          mountpoint -q $U/dev || mount --bind /dev $U/dev
-          mountpoint -q $U/dev/pts || mount --bind /dev/pts $U/dev/pts
-          cp /etc/resolv.conf $U/etc/resolv.conf
-          exec chroot $U /bin/bash -l
+          [ -d "$U/etc" ] || { echo "Jalankan dulu: sudo setup-ubuntu"; exit 1; }
+          mountpoint -q "$U/proc" || mount -t proc proc "$U/proc"
+          mountpoint -q "$U/sys" || mount --bind /sys "$U/sys"
+          mountpoint -q "$U/dev" || mount --bind /dev "$U/dev"
+          mountpoint -q "$U/dev/pts" || mount --bind /dev/pts "$U/dev/pts"
+          cp /etc/resolv.conf "$U/etc/resolv.conf"
+          exec chroot "$U" /bin/bash -l
           EOF
-          sudo chmod +x $R/usr/local/bin/setup-ubuntu $R/usr/local/bin/ubuntu
-          sudo umount $R
+          sudo chmod 0755 "$R/usr/local/bin/setup-ubuntu" "$R/usr/local/bin/ubuntu"
+          sudo chown root:root "$R/usr/local/bin/setup-ubuntu" "$R/usr/local/bin/ubuntu"
 
-      - name: Ambil U-Boot SM7125
+          echo "Rootfs SSH/NetworkManager/TTY configuration complete."
+          sudo umount "$R"
+          trap - EXIT
+
+      - name: Download U-Boot SM7125
         run: |
+          set -euo pipefail
           curl -fL -o out/u-boot-sm7125.img \
             https://github.com/asidko/redmi-note-9s-postmarketos/releases/latest/download/u-boot-sm7125.img
 
-      - name: Kompres dan checksum
+      - name: Compress and checksum
         run: |
+          set -euo pipefail
           cd out
           zstd -T0 -9 --rm xiaomi-miatoll-boot.img
           zstd -T0 -9 --rm xiaomi-miatoll-root.img
           sha256sum * > SHA256SUMS
-          ls -la
-      - name: Upload ke Release
+          ls -lah
+
+      - name: Upload GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: pmos-${{ github.run_number }}
