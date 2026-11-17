@@ -19,7 +19,7 @@ on:
         default: "3.10.1"
       pmaports_branch:
         description: "Branch pmaports"
-        default: "systemd-v25.12"
+        default: "v25.12"
 
 jobs:
   build:
@@ -65,7 +65,7 @@ jobs:
           s = s[:m.end()] + "    return\n" + s[m.end():]
           open(p, "w").write(s)
           PY
-          printf '#!/bin/sh\nexec python3 %s/pmbootstrap.py "$@"\n' "$PWD" | sudo tee /usr/local/bin/pmbootstrap >/dev/null
+          printf '#!/bin/sh\nexec python3 %s/pmbootstrap.py --config %s/pmbootstrap.cfg "$@"\n' "$PWD" "$HOME" | sudo tee /usr/local/bin/pmbootstrap >/dev/null
           sudo chmod +x /usr/local/bin/pmbootstrap
           pmbootstrap --version
 
@@ -74,13 +74,14 @@ jobs:
           W=$HOME/.local/var/pmbootstrap
           mkdir -p "$W/cache_git"
           git clone https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$W/cache_git/pmaports"
-          git -C "$W/cache_git/pmaports" checkout "$PMA_BRANCH" || git -C "$W/cache_git/pmaports" checkout v25.12
+          git -C "$W/cache_git/pmaports" checkout "$PMA_BRANCH"
+          printf '[pmbootstrap]\naports = %s/cache_git/pmaports\nwork = %s\ndevice = xiaomi-miatoll\n' "$W" "$W" > "$HOME/pmbootstrap.cfg"
           pmbootstrap config device xiaomi-miatoll
           pmbootstrap config kernel joyeuse
           pmbootstrap config ui "$UI"
           pmbootstrap config boot_size 256
           pmbootstrap config hostname redmi
-          pmbootstrap config user keyza
+          pmbootstrap config user user
           pmbootstrap config systemd always || true
           pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,wpa_supplicant,nano,htop,sudo"
           pmbootstrap config
@@ -161,4 +162,3 @@ jobs:
           path: out/
           retention-days: 3
           compression-level: 0
-          
