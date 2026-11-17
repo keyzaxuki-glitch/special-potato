@@ -25,6 +25,9 @@ jobs:
   build:
     runs-on: ubuntu-24.04
     timeout-minutes: 150
+    permissions:
+      contents: write
+    
     env:
       PMOS_PASSWORD: ${{ secrets.PMOS_PASSWORD }}
       WIFI_SSID: ${{ secrets.WIFI_SSID }}
@@ -154,20 +157,13 @@ jobs:
           zstd -T0 -9 --rm xiaomi-miatoll-boot.img
           zstd -T0 -9 --rm xiaomi-miatoll-root.img
           sha256sum * > SHA256SUMS
-          ls -lh
-       permissions:
-         contents: write
+          ls -la
 
-      - name: Upload ke Release
+      - name: Upload ke relse
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: $({ github.token })
         run: |
-          gh release create "pmos-$(date +%Y%m%d-%H%M)" out/* \
-            --title "pmOS miatoll headless" --notes "Build headless"
-
-        uses: actions/upload-artifact@v4
-        with:
-          name: pmos-miatoll-headless
-          path: out/
-          retention-days: 3
-          compression-level: 0
+          gh release create "pmos-$(date +%Y%m%d-%H%M" out/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --title "pmOs miatoll headless"
+            --notes "Build headless"
