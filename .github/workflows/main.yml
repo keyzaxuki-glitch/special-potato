@@ -155,8 +155,9 @@ jobs:
           zstd -T0 -9 --rm xiaomi-miatoll-root.img
           sha256sum * > SHA256SUMS
           ls -lh
+       permissions:
+         contents: write
 
-      - name: Unggah artifact
       - name: Upload ke Release
         env:
           GH_TOKEN: ${{ github.token }}
