@@ -1,0 +1,164 @@
+name: Build postmarketOS miatoll (headless)
+
+# Simpan file ini sebagai: .github/workflows/build.yml
+# Secrets yang dibutuhkan (Settings > Secrets and variables > Actions):
+#   PMOS_PASSWORD  (wajib)  password user "user"
+#   WIFI_SSID      (opsional) nama Wi-Fi supaya HP langsung konek saat boot
+#   WIFI_PSK       (opsional) password Wi-Fi
+# PERINGATAN: password Wi-Fi ikut tertanam di image. Pakai repo PRIVATE
+# dan hapus artifact setelah diunduh.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ui:
+        description: "UI (none = headless)"
+        default: "none"
+      pmbootstrap_tag:
+        description: "Versi pmbootstrap"
+        default: "3.10.1"
+      pmaports_branch:
+        description: "Branch pmaports"
+        default: "systemd-v25.12"
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    env:
+      PMOS_PASSWORD: ${{ secrets.PMOS_PASSWORD }}
+      WIFI_SSID: ${{ secrets.WIFI_SSID }}
+      WIFI_PSK: ${{ secrets.WIFI_PSK }}
+      UI: ${{ inputs.ui }}
+      PMB_TAG: ${{ inputs.pmbootstrap_tag }}
+      PMA_BRANCH: ${{ inputs.pmaports_branch }}
+    steps:
+      - name: Cek secret wajib
+        run: |
+          if [ -z "$PMOS_PASSWORD" ]; then
+            echo "Isi secret PMOS_PASSWORD dulu."; exit 1
+          fi
+
+      - name: Kosongkan ruang disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
+          df -h /
+
+      - name: Pasang dependensi host
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git openssl procps python3 zstd e2fsprogs uuid-runtime
+          sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
+
+      - name: Ambil pmbootstrap dan patch boot_size
+        run: |
+          git clone https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git
+          cd pmbootstrap
+          git checkout "$PMB_TAG" || git checkout "v$PMB_TAG"
+          f=$(grep -rl "def sanity_check_boot_size" pmb)
+          echo "Patch: $f"
+          python3 - "$f" <<'PY'
+          import sys, re
+          p = sys.argv[1]
+          s = open(p).read()
+          m = re.search(r"def sanity_check_boot_size\([^)]*\)[^:]*:\n", s)
+          s = s[:m.end()] + "    return\n" + s[m.end():]
+          open(p, "w").write(s)
+          PY
+          printf '#!/bin/sh\nexec python3 %s/pmbootstrap.py "$@"\n' "$PWD" | sudo tee /usr/local/bin/pmbootstrap >/dev/null
+          sudo chmod +x /usr/local/bin/pmbootstrap
+          pmbootstrap --version
+
+      - name: Konfigurasi pmbootstrap
+        run: |
+          W=$HOME/.local/var/pmbootstrap
+          mkdir -p "$W/cache_git"
+          git clone https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$W/cache_git/pmaports"
+          git -C "$W/cache_git/pmaports" checkout "$PMA_BRANCH" || git -C "$W/cache_git/pmaports" checkout v25.12
+          pmbootstrap config device xiaomi-miatoll
+          pmbootstrap config kernel joyeuse
+          pmbootstrap config ui "$UI"
+          pmbootstrap config boot_size 256
+          pmbootstrap config hostname redmi
+          pmbootstrap config user keyza
+          pmbootstrap config systemd always || true
+          pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,wpa_supplicant,nano,htop,sudo"
+          pmbootstrap config
+
+      - name: Bangun image
+        run: |
+          pmbootstrap -y install --split --password "$PMOS_PASSWORD"
+          mkdir -p out
+          cp "$HOME/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs/xiaomi-miatoll-boot.img" out/
+          cp "$HOME/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs/xiaomi-miatoll-root.img" out/
+          ls -lh out
+
+      - name: Patch boot image (matikan Plymouth)
+        run: |
+          sudo mkdir -p /mnt/b
+          sudo mount -o loop out/xiaomi-miatoll-boot.img /mnt/b
+          f=$(sudo find /mnt/b -name 'pmos.conf' | head -1)
+          echo "Entry: $f"
+          sudo cat "$f"
+          sudo sed -i 's/quiet loglevel=2/plymouth.enable=0 console=tty0 systemd.show_status=true/' "$f"
+          echo "--- setelah patch ---"
+          sudo cat "$f"
+          sudo umount /mnt/b
+
+      - name: Siapkan rootfs (Wi-Fi, SSH, headless)
+        run: |
+          R=/mnt/r
+          sudo mkdir -p $R
+          sudo mount -o loop out/xiaomi-miatoll-root.img $R
+          echo "Unit systemd yang tersedia:"
+          ls $R/usr/lib/systemd/system 2>/dev/null | grep -iE 'ssh|networkmanager|wpa' || true
+
+          enable() {
+            for d in usr/lib/systemd/system lib/systemd/system; do
+              if [ -e "$R/$d/$1" ]; then
+                sudo mkdir -p $R/etc/systemd/system/multi-user.target.wants
+                sudo ln -sf "/$d/$1" "$R/etc/systemd/system/multi-user.target.wants/$1"
+                echo "enabled: $1"; return
+              fi
+            done
+            echo "WARN: unit $1 tidak ditemukan"
+          }
+          enable sshd.service
+          enable NetworkManager.service
+
+          if [ "$UI" = "none" ]; then
+            sudo ln -sf /usr/lib/systemd/system/multi-user.target $R/etc/systemd/system/default.target
+          fi
+
+          if [ -n "$WIFI_SSID" ]; then
+            D=$R/etc/NetworkManager/system-connections
+            sudo mkdir -p $D
+            printf '[connection]\nid=wifi\nuuid=%s\ntype=wifi\nautoconnect=true\n\n[wifi]\nmode=infrastructure\nssid=%s\n\n[wifi-security]\nkey-mgmt=wpa-psk\npsk=%s\n\n[ipv4]\nmethod=auto\n\n[ipv6]\nmethod=auto\n' \
+              "$(uuidgen)" "$WIFI_SSID" "$WIFI_PSK" | sudo tee $D/wifi.nmconnection >/dev/null
+            sudo chmod 600 $D/wifi.nmconnection
+            sudo chown root:root $D/wifi.nmconnection
+            echo "Profil Wi-Fi ditulis."
+          fi
+          sudo umount $R
+
+      - name: Ambil U-Boot SM7125
+        run: |
+          curl -fL -o out/u-boot-sm7125.img \
+            https://github.com/asidko/redmi-note-9s-postmarketos/releases/latest/download/u-boot-sm7125.img
+
+      - name: Kompres dan checksum
+        run: |
+          cd out
+          zstd -T0 -9 --rm xiaomi-miatoll-boot.img
+          zstd -T0 -9 --rm xiaomi-miatoll-root.img
+          sha256sum * > SHA256SUMS
+          ls -lh
+
+      - name: Unggah artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: pmos-miatoll-headless
+          path: out/
+          retention-days: 3
+          compression-level: 0
+          
