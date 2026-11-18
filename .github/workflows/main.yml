@@ -354,6 +354,7 @@ jobs:
               ]
               if psk:
                   lines += [
+                      "security=802-11-wireless-security",
                       "",
                       "[wifi-security]",
                       "key-mgmt=wpa-psk",
@@ -372,6 +373,42 @@ jobs:
             sudo chown root:root "$R/etc/NetworkManager/system-connections/wifi-auto.nmconnection"
           fi
 
+          # The boot photo shows the actual gadget interface is usb0 (not rndis0).
+          # The phone is the USB gadget/server side: keep its observed address static.
+          # DHCP belongs on the USB host side; asking the phone to run DHCP-client here
+          # leaves the host without a stable address to connect to.
+          sudo tee "$R/etc/NetworkManager/system-connections/usb-rndis.nmconnection" >/dev/null <<'EOF'
+          [connection]
+          id=usb-rndis-usb0
+          uuid=7d8d1d3c-5f25-4a9c-b4d8-7a9f6c3b2e11
+          type=ethernet
+          interface-name=usb0
+          autoconnect=true
+          autoconnect-priority=100
+
+          [ethernet]
+
+          [ipv4]
+          method=manual
+          addresses=172.16.42.1/16
+          never-default=true
+
+          [ipv6]
+          method=ignore
+          EOF
+          sudo chmod 0600 "$R/etc/NetworkManager/system-connections/usb-rndis.nmconnection"
+          sudo chown root:root "$R/etc/NetworkManager/system-connections/usb-rndis.nmconnection"
+          echo "Saved static USB gadget profile for usb0 (172.16.42.1/16)."
+
+          # Use NetworkManager's built-in DHCP client for the Wi-Fi router lease.
+          sudo install -d "$R/etc/NetworkManager/conf.d"
+          sudo tee "$R/etc/NetworkManager/conf.d/10-miatoll-dhcp.conf" >/dev/null <<'EOF'
+          [main]
+          dhcp=internal
+          EOF
+          sudo chmod 0644 "$R/etc/NetworkManager/conf.d/10-miatoll-dhcp.conf"
+          sudo chown root:root "$R/etc/NetworkManager/conf.d/10-miatoll-dhcp.conf"
+
           # Show the loaded/active/failed system services directly on physical tty1 at boot.
           sudo install -d "$R/usr/local/sbin" "$R/etc/systemd/system/multi-user.target.wants" \
             "$R/etc/systemd/system/getty.target.wants"
@@ -388,14 +425,28 @@ jobs:
           echo 'SYSTEMD: FAILED UNITS'
           systemctl --failed --no-pager --plain || true
           echo
-          echo 'NETWORK INTERFACES'
+          echo 'NETWORK INTERFACES (LINK + ADDRESS)'
+          ip -brief link 2>/dev/null || true
           ip -brief address 2>/dev/null || ip addr 2>/dev/null || true
+          echo
+          echo 'NETWORKMANAGER DEVICES'
+          nmcli -f DEVICE,TYPE,STATE,CONNECTION device status 2>&1 || true
+          echo
+          echo 'WIFI RADIO / INTERFACES'
+          rfkill list 2>&1 || true
+          iw dev 2>&1 || true
+          echo
+          echo 'IP ROUTES'
+          ip route 2>&1 || true
+          echo
+          echo 'NETWORKMANAGER RECENT LOGS'
+          journalctl -b -u NetworkManager --no-pager -n 35 2>&1 || true
           echo
           echo 'SSH SERVICE'
           systemctl --no-pager --full status sshd.service 2>&1 || true
           echo
           echo 'SSH LISTEN SOCKETS'
-          ss -lnt 2>/dev/null | grep -E 'State|:22([[:space:]]|$)' || true
+          ss -lntp 2>&1 | grep -E 'State|:22([[:space:]]|$)' || true
           echo
           echo '============================================================'
           echo 'TTY1 status snapshot; login prompt follows.'
@@ -413,6 +464,7 @@ jobs:
 
           [Service]
           Type=oneshot
+          ExecStartPre=/bin/sleep 12
           ExecStart=/usr/local/sbin/miatoll-tty1-status
           StandardInput=tty
           StandardOutput=tty
