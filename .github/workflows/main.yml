@@ -39,6 +39,12 @@ jobs:
       PMA_BRANCH: ${{ inputs.pmaports_branch }}
 
     steps:
+      - name: Checkout repository (required for committing build logs)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
       - name: Validate secrets
         shell: bash
         run: |
@@ -125,7 +131,13 @@ jobs:
           echo 8 > "$W/version"
 
           git clone --depth 1 --branch "$PMA_BRANCH" https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$HOME/pmaports"
+          # Release branches (for example v26.06) do not contain channels.cfg.
+          # pmbootstrap reads it from origin/main, so fetch that remote-tracking ref too.
+          git -C "$HOME/pmaports" fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          git -C "$HOME/pmaports" show origin/main:channels.cfg >/dev/null
           echo "Selected pmaports branch: $(git -C "$HOME/pmaports" branch --show-current)"
+          echo "Fetched channels metadata from origin/main."
           echo "pmaports commit: $(git -C "$HOME/pmaports" rev-parse --short HEAD)"
           printf '[pmbootstrap]\naports = %s/pmaports\nwork = %s\n' "$HOME" "$W" > "$HOME/pmbootstrap.cfg"
 
@@ -498,6 +510,16 @@ jobs:
           name: pmOS miatoll headless
           files: out/*
 
+      # Keep a downloadable copy even when repository push is blocked by branch protection.
+      - name: Upload workflow log artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: workflow-log-run-${{ github.run_number }}-attempt-${{ github.run_attempt }}
+          path: build-logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
+
       # Persist the captured workflow output in the repository, even if the build failed.
       - name: Commit workflow log to repository
         if: always()
@@ -535,3 +557,4 @@ jobs:
           fi
           git commit -m "Add workflow log for run ${GITHUB_RUN_NUMBER}"
           git push origin "HEAD:${GITHUB_REF_NAME}"
+          
