@@ -1,0 +1,250 @@
+Filesystem            Size  Used Avail Use% Mounted on
+/dev/mapper/cow-root  145G   38G  108G  26% /
+Get:1 file:/etc/apt/apt-mirrors.txt Mirrorlist [152 B]
+Get:5 https://packages.microsoft.com/ubuntu/24.04/prod noble InRelease [3600 B]
+Get:6 http://security.ubuntu.com/ubuntu noble-security InRelease [126 kB]
+Get:7 https://packages.microsoft.com/ubuntu/24.04/prod noble/main arm64 Packages [723 kB]
+Hit:2 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble InRelease
+Get:8 https://packages.microsoft.com/ubuntu/24.04/prod noble/main amd64 Packages [794 kB]
+Get:3 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates InRelease [126 kB]
+Get:4 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-backports InRelease [126 kB]
+Get:16 http://security.ubuntu.com/ubuntu noble-security/main amd64 Packages [1196 kB]
+Get:9 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/main amd64 Packages [1455 kB]
+Get:10 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/main Translation-en [317 kB]
+Get:17 http://security.ubuntu.com/ubuntu noble-security/main Translation-en [238 kB]
+Get:18 http://security.ubuntu.com/ubuntu noble-security/universe amd64 Packages [1229 kB]
+Get:19 http://security.ubuntu.com/ubuntu noble-security/universe Translation-en [248 kB]
+Get:20 http://security.ubuntu.com/ubuntu noble-security/restricted amd64 Packages [1788 kB]
+Get:21 http://security.ubuntu.com/ubuntu noble-security/restricted Translation-en [411 kB]
+Get:22 http://security.ubuntu.com/ubuntu noble-security/multiverse Translation-en [12.7 kB]
+Get:11 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/universe amd64 Packages [1715 kB]
+Get:12 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/universe Translation-en [345 kB]
+Get:13 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/restricted amd64 Packages [1887 kB]
+Get:14 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/restricted Translation-en [433 kB]
+Get:15 http://us-east-2.ec2.archive.ubuntu.com/ubuntu noble-updates/multiverse Translation-en [14.6 kB]
+Fetched 13.2 MB in 4s (3341 kB/s)
+Reading package lists...
+Reading package lists...
+Building dependency tree...
+Reading state information...
+git is already the newest version (1:2.56.1-0ppa1~ubuntu24.04.1).
+git set to manually installed.
+curl is already the newest version (8.5.0-2ubuntu10.16).
+openssl is already the newest version (3.0.13-0ubuntu3.16).
+procps is already the newest version (2:4.0.4-4ubuntu3.3).
+procps set to manually installed.
+python3 is already the newest version (3.12.3-0ubuntu2.1).
+zstd is already the newest version (1.5.5+dfsg2-2build1.1).
+zstd set to manually installed.
+e2fsprogs is already the newest version (1.47.0-2.4~exp1ubuntu4.1).
+e2fsprogs set to manually installed.
+uuid-runtime is already the newest version (2.39.3-9ubuntu6.6).
+uuid-runtime set to manually installed.
+0 upgraded, 0 newly installed, 0 to remove and 30 not upgraded.
+Cloning into 'pmbootstrap'...
+warning: redirecting to https://gitlab.nura.eco/postmarketOS/pmbootstrap.git/
+warning: refs/tags/3.12.1 0ad3fa31e022f8633cc34ac72bdf09657245b55a is not a commit!
+Note: switching to '7d23010a125ca7386fec4e390d14128b6c24d266'.
+
+You are in 'detached HEAD' state. You can look around, make experimental
+changes and commit them, and you can discard any commits you make in this
+state without impacting any branches by switching back to a branch.
+
+If you want to create a new branch to retain commits you create, you may
+do so (now or later) by using -c with the switch command. Example:
+
+  git switch -c <new-branch-name>
+
+Or undo this operation with:
+
+  git switch -
+
+Turn off this advice by setting config variable advice.detachedHead to false
+
+Selected pmbootstrap version: 3.12.1
+Patching: pmb/install/_install.py
+3.12.1
+Cloning into '/home/runner/pmaports'...
+warning: redirecting to https://gitlab.nura.eco/postmarketOS/pmaports.git/
+warning: redirecting to https://gitlab.nura.eco/postmarketOS/pmaports.git/
+From https://gitlab.postmarketos.org/postmarketOS/pmaports
+ * [new branch]          main       -> origin/main
+Selected pmaports branch: v26.06
+Fetched channels metadata from origin/main.
+pmaports commit: b72b16993
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+device = xiaomi-miatoll
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+ui = none
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+service_manager = systemd
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+boot_size = 256
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+hostname = knaxu
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+user = keyza
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+extra_packages = openssh-server-pam,networkmanager,networkmanager-wifi,networkmanager-cli,networkmanager-systemd,dbus-systemd,wpa_supplicant,wireless-regdb,nano,htop
+[05:49:30] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+[pmbootstrap]
+aports = /home/runner/pmaports
+auto_zap_misconfigured_chroots = no
+boot_size = 256
+build_default_device_arch = False
+build_pkgs_on_install = True
+ccache_size = 5G
+device = xiaomi-miatoll
+extra_packages = openssh-server-pam,networkmanager,networkmanager-wifi,networkmanager-cli,networkmanager-systemd,dbus-systemd,wpa_supplicant,wireless-regdb,nano,htop
+extra_space = 0
+hostname = knaxu
+is_default_channel = True
+jobs = 4
+kernel = stable
+keymap = 
+locale = en_US.UTF-8
+qemu_redir_stdio = False
+service_manager = systemd
+ssh_key_glob = ~/.ssh/*.pub
+ssh_keys = False
+sudo_timer = False
+timezone = GMT
+ui = none
+ui_extras = False
+user = keyza
+work = /home/runner/.local/var/pmbootstrap
+
+[providers]
+
+[mirrors]
+alpine = http://cdn.alpinelinux.org/
+alpine_custom = none
+pmaports = http://mirror.postmarketos.org/postmarketos/
+pmaports_custom = none
+systemd = http://mirror.postmarketos.org/postmarketos/extra-repos/systemd/
+systemd_custom = none
+
+[05:49:31] [94mNOTE:[0m Timeout enabled, commands will be killed after 900 seconds of not writing any output. Reason: running in CI based on autodetection (environment variable 'CI' set)[0m
+[05:49:31] [92m*** (1/4) PREPARE NATIVE CHROOT ***[0m
+[05:49:31] Update package index for x86_64 (4 file(s))[0m
+[05:49:33] Download http://cdn.alpinelinux.org/v3.24/main/x86_64/apk-tools-static-3.0.9-r0.apk[0m
+[05:49:33] (native) Creating chroot[0m
+[05:49:36] (native) install cryptsetup util-linux parted[0m
+[05:49:37] [92m*** (2/4) CREATE DEVICE ROOTFS ("xiaomi-miatoll") ***[0m
+[05:49:37] (native) install qemu-aarch64[0m
+[05:49:38] Register qemu binfmt (aarch64)[0m
+[05:49:38] (rootfs_xiaomi-miatoll) Creating chroot[0m
+[05:49:38] Update package index for aarch64 (4 file(s))[0m
+[05:49:45] (rootfs_xiaomi-miatoll) install postmarketos-base-systemd[0m
+[05:50:54] (rootfs_xiaomi-miatoll) install postmarketos-base device-xiaomi-miatoll device-xiaomi-miatoll-nonfree-firmware openssh-server-pam networkmanager networkmanager-wifi networkmanager-cli networkmanager-systemd dbus-systemd wpa_supplicant wireless-regdb nano htop postmarketos-base-nofde sudo-rs[0m
+[05:51:34] (rootfs_xiaomi-miatoll) install postmarketos-mkinitfs[0m
+[05:51:35] (rootfs_xiaomi-miatoll) mkinitfs[0m
+[05:51:41]  [92m*** SET LOGIN PASSWORD FOR: 'keyza' ***[0m
+[05:51:41] [92m*** (3/4) PREPARE INSTALL BLOCKDEVICE ***[0m
+[05:51:41] (native) create xiaomi-miatoll-boot.img (256M)[0m
+[05:51:41] (native) create xiaomi-miatoll-root.img (792M)[0m
+[05:51:41] (native) mount /dev/installp1 (xiaomi-miatoll-boot.img)[0m
+[05:51:41] (native) mount /dev/installp2 (xiaomi-miatoll-root.img)[0m
+[05:51:41] (native) install e2fsprogs[0m
+[05:51:42] (native) format /dev/installp2 (pmOS_root, ext4)[0m
+[05:51:42] (native) mount /dev/installp2 to /mnt/install[0m
+[05:51:42] (native) install dosfstools[0m
+[05:51:42] (native) format /dev/installp1 (pmOS_boot, fat32)[0m
+[05:51:42] (native) create /etc/fstab[0m
+[05:51:42] (rootfs_xiaomi-miatoll) mkinitfs[0m
+[05:51:49] [92m*** (4/4) FILL INSTALL BLOCKDEVICE ***[0m
+[05:51:49] (native) copy rootfs_xiaomi-miatoll to /mnt/install/[0m
+[05:51:50] [0m
+[05:51:50] [92m*** FLASHING INFORMATION ***[0m
+[05:51:50] Run the following to flash your installation to the target device:[0m
+[05:51:50] * pmbootstrap flasher flash_rootfs[0m
+[05:51:50]   Flashes the generated rootfs image to your device:[0m
+[05:51:50]   /home/runner/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs/xiaomi-miatoll-root.img[0m
+[05:51:50] * pmbootstrap flasher flash_kernel[0m
+[05:51:50]   Flashes the kernel + initramfs to your device:[0m
+[05:51:50]   /home/runner/.local/var/pmbootstrap/chroot_native/home/pmos/rootfs/xiaomi-miatoll-boot.img[0m
+[05:51:50]   ([94mNOTE:[0m fastboot-bootpart also supports booting the kernel/initramfs directly without flashing. Use 'pmbootstrap flasher boot' to do that.)[0m
+[05:51:50] * If the above steps do not work, you can also create symlinks to the generated files with 'pmbootstrap export' and flash outside of pmbootstrap.[0m
+[05:51:50] [0m
+[05:51:50] [92m*** SSH DAEMON INFORMATION ***[0m
+[05:51:50] SSH daemon is enabled (disable with --no-sshd).[0m
+[05:51:50] Login as 'keyza' with the password given during installation.[0m
+[05:51:50] [0m
+[05:51:50] [92m*** FIREWALL INFORMATION ***[0m
+[05:51:50] Firewall is enabled, but may not work (couldn't determine if kernel supports nftables).[0m
+[05:51:50] For more information: https://postmarketos.org/firewall[0m
+[05:51:50] [0m
+[05:51:50] [94mNOTE:[0m chroot is still active (use 'pmbootstrap shutdown' as necessary)[0m
+[05:51:50] [92mDONE![0m[0m
+total 635M
+-rw-r--r-- 1 runner runner 256M Nov 18 05:51 xiaomi-miatoll-boot.img
+-rw-r--r-- 1 runner runner 792M Nov 18 05:51 xiaomi-miatoll-root.img
+Boot entry: /mnt/b/loader/entries/pmos.conf
+--- patched boot entry ---
+title postmarketOS
+sort-key postmarketOS
+linux vmlinuz
+
+initrd initramfs
+options pmos_boot_uuid=CEE8-E594 pmos_root_uuid=4fbb612c-b64d-4434-94e6-715169427d6d pmos_rootfsopts=defaults plymouth.enable=0 console=tty1 loglevel=7 systemd.show_status=1 systemd.log_level=info
+
+Systemd unit files found in rootfs:
+/mnt/r/lib/systemd/system/NetworkManager-dispatcher.service
+/mnt/r/lib/systemd/system/NetworkManager-wait-online.service
+/mnt/r/lib/systemd/system/NetworkManager.service
+/mnt/r/lib/systemd/system/dbus-broker.service
+/mnt/r/lib/systemd/system/dbus.service
+/mnt/r/lib/systemd/system/dbus.socket
+/mnt/r/lib/systemd/system/getty@.service
+/mnt/r/lib/systemd/system/ssh-access.target
+/mnt/r/lib/systemd/system/sshd.service
+/mnt/r/lib/systemd/system/sshd@.service
+/mnt/r/lib/systemd/system/sshdgenkeys.service
+/mnt/r/usr/lib/systemd/system/NetworkManager-dispatcher.service
+/mnt/r/usr/lib/systemd/system/NetworkManager-wait-online.service
+/mnt/r/usr/lib/systemd/system/NetworkManager.service
+/mnt/r/usr/lib/systemd/system/dbus-broker.service
+/mnt/r/usr/lib/systemd/system/dbus.service
+/mnt/r/usr/lib/systemd/system/dbus.socket
+/mnt/r/usr/lib/systemd/system/getty@.service
+/mnt/r/usr/lib/systemd/system/ssh-access.target
+/mnt/r/usr/lib/systemd/system/sshd.service
+/mnt/r/usr/lib/systemd/system/sshd@.service
+/mnt/r/usr/lib/systemd/system/sshdgenkeys.service
+enabled packaged sshd.service: /usr/lib/systemd/system/sshd.service
+enabled: NetworkManager.service
+enabled: dbus.service
+enabled: dbus.socket
+enabled: getty@tty1.service
+Saved NetworkManager Wi-Fi profile (credentials are not printed).
+Rootfs SSH/NetworkManager/TTY configuration complete.
+  % Total    % Received % Xferd  Average Speed   Time    Time     Time  Current
+                                 Dload  Upload   Total   Spent    Left  Speed
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+  0     0    0     0    0     0      0      0 --:--:-- --:--:-- --:--:--     0
+100 1008k  100 1008k    0     0  1846k      0 --:--:-- --:--:-- --:--:-- 1846k
+xiaomi-miatoll-boot.img : 10.48%   (   256 MiB =>   26.8 MiB, xiaomi-miatoll-boot.img.zst) 
+xiaomi-miatoll-root.img : 40.43%   (   792 MiB =>    320 MiB, xiaomi-miatoll-root.img.zst) 
+total 349M
+drwxr-xr-x 2 runner runner  4.0K Nov 18 05:51 .
+drwxr-xr-x 7 runner runner  4.0K Nov 18 05:51 ..
+-rw-r--r-- 1 runner runner   272 Nov 18 05:51 SHA256SUMS
+-rw-r--r-- 1 runner runner 1008K Nov 18 05:51 u-boot-sm7125.img
+-rw-r--r-- 1 runner runner   27M Nov 18 05:51 xiaomi-miatoll-boot.img.zst
+-rw-r--r-- 1 runner runner  321M Nov 18 05:51 xiaomi-miatoll-root.img.zst
+
+===== RUN SUMMARY =====
+Run ID: 44246572373
+Run number: 20
+Attempt: 1
+Event: workflow_dispatch
+Commit: f674935d138f32be048dab6a68d0f79872271217
+Ref: refs/heads/main
+Runner: Linux
+Finished at (UTC): 2026-11-18T05:52:21Z
+
+===== OUTPUT FILES =====
+SHA256SUMS 272 bytes
+u-boot-sm7125.img 1032192 bytes
+xiaomi-miatoll-boot.img.zst 28140240 bytes
+xiaomi-miatoll-root.img.zst 335765291 bytes
