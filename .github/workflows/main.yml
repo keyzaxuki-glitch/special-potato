@@ -15,12 +15,12 @@ on:
       pmbootstrap_tag:
         description: "Versi pmbootstrap"
         required: true
-        default: "3.10.1"
+        default: "3.12.1"
         type: string
       pmaports_branch:
         description: "Branch pmaports"
         required: true
-        default: "v25.12"
+        default: "v26.06"
         type: string
 
 jobs:
@@ -42,6 +42,8 @@ jobs:
       - name: Validate secrets
         shell: bash
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
           if [[ -z "$PMOS_PASSWORD" ]]; then
             echo "Set the PMOS_PASSWORD repository secret first."
@@ -54,11 +56,15 @@ jobs:
 
       - name: Free runner disk space
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/lib/android /opt/hostedtoolcache/CodeQL
           df -h /
 
       - name: Install host dependencies
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           sudo apt-get update
           sudo apt-get install -y git curl openssl procps python3 zstd e2fsprogs uuid-runtime
           sudo mount -t binfmt_misc binfmt_misc /proc/sys/fs/binfmt_misc 2>/dev/null || true
@@ -66,10 +72,12 @@ jobs:
       - name: Fetch pmbootstrap and patch boot_size check
         shell: bash
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
-          git clone https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git
+          git clone --depth 1 --branch "$PMB_TAG" https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git
           cd pmbootstrap
-          git checkout "$PMB_TAG" || git checkout "v$PMB_TAG"
+          echo "Selected pmbootstrap version: $(git describe --tags --always)"
 
           f="$(grep -rl 'def sanity_check_boot_size' pmb | head -n 1)"
           if [[ -z "$f" ]]; then
@@ -109,13 +117,16 @@ jobs:
       - name: Configure pmbootstrap
         shell: bash
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
           W="$HOME/.local/var/pmbootstrap"
           mkdir -p "$W"
           echo 8 > "$W/version"
 
-          git clone https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$HOME/pmaports"
-          git -C "$HOME/pmaports" checkout "$PMA_BRANCH"
+          git clone --depth 1 --branch "$PMA_BRANCH" https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$HOME/pmaports"
+          echo "Selected pmaports branch: $(git -C "$HOME/pmaports" branch --show-current)"
+          echo "pmaports commit: $(git -C "$HOME/pmaports" rev-parse --short HEAD)"
           printf '[pmbootstrap]\naports = %s/pmaports\nwork = %s\n' "$HOME" "$W" > "$HOME/pmbootstrap.cfg"
 
           pmbootstrap config device xiaomi-miatoll
@@ -126,12 +137,14 @@ jobs:
           pmbootstrap config boot_size 256
           pmbootstrap config hostname knaxu
           pmbootstrap config user keyza
-          pmbootstrap config extra_packages "openssh,networkmanager,networkmanager-wifi,networkmanager-cli,networkmanager-systemd,dbus-systemd,wpa_supplicant,wireless-regdb,nano,htop"
+          pmbootstrap config extra_packages "openssh-server-pam,networkmanager,networkmanager-wifi,networkmanager-cli,networkmanager-systemd,dbus-systemd,wpa_supplicant,wireless-regdb,nano,htop"
           pmbootstrap config
 
       - name: Build image
         shell: bash
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
           pmbootstrap -y install --split --password "$PMOS_PASSWORD"
           mkdir -p out
@@ -143,6 +156,8 @@ jobs:
       - name: Patch boot image (TTY status output)
         shell: bash
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
           sudo mkdir -p /mnt/b
           sudo mount -o loop,rw out/xiaomi-miatoll-boot.img /mnt/b
@@ -163,7 +178,7 @@ jobs:
           changed = False
           flags = [
               "plymouth.enable=0",
-              "console=tty0",
+              "console=tty1",
               "loglevel=7",
               "systemd.show_status=1",
               "systemd.log_level=info",
@@ -196,6 +211,8 @@ jobs:
       - name: Configure rootfs (Wi-Fi, SSH, TTY service list, Ubuntu chroot)
         shell: bash
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
           R=/mnt/r
           sudo mkdir -p "$R"
@@ -208,45 +225,28 @@ jobs:
             \( -iname '*ssh*' -o -iname '*networkmanager*' -o -iname 'dbus*' -o -iname 'getty@.service' \) \
             -print 2>/dev/null | sort || true
 
-          # SSH server unit. Host keys are generated on the phone at first boot,
-          # not baked into the image (so every installation gets unique keys).
-          sudo install -d -o root -g root -m 0755 "$R/etc/ssh" "$R/var/empty" \
+          # Use the packaged OpenSSH systemd unit; do not replace it with a homemade unit.
+          ssh_unit=""
+          for d in usr/lib/systemd/system lib/systemd/system; do
+            if [[ -f "$R/$d/sshd.service" ]]; then
+              ssh_unit="/$d/sshd.service"
+              break
+            fi
+          done
+          if [[ -z "$ssh_unit" ]]; then
+            echo "ERROR: packaged sshd.service is missing. Check openssh-server-pam/systemd packages."
+            exit 1
+          fi
+          sudo install -d -o root -g root -m 0755 \
+            "$R/etc/systemd/system/sshd.service.d" "$R/etc/ssh/sshd_config.d" \
             "$R/etc/systemd/system/multi-user.target.wants"
-          sudo tee "$R/etc/ssh/sshd_config" >/dev/null <<'EOF'
-          Port 22
-          AddressFamily any
-          HostKey /etc/ssh/ssh_host_ed25519_key
-          HostKey /etc/ssh/ssh_host_ecdsa_key
-          HostKey /etc/ssh/ssh_host_rsa_key
-          PermitRootLogin no
-          PubkeyAuthentication yes
-          PasswordAuthentication yes
-          KbdInteractiveAuthentication no
-          X11Forwarding no
-          PrintMotd no
-          Subsystem sftp /usr/lib/ssh/sftp-server
-          EOF
-          sudo chmod 600 "$R/etc/ssh/sshd_config"
-          sudo chown root:root "$R/etc/ssh/sshd_config"
-
-          sudo tee "$R/etc/systemd/system/sshd.service" >/dev/null <<'EOF'
-          [Unit]
-          Description=OpenSSH server
-          After=network.target
-
+          # Generate unique host keys at first boot, immediately before sshd starts.
+          sudo tee "$R/etc/systemd/system/sshd.service.d/10-hostkeys.conf" >/dev/null <<'EOF'
           [Service]
-          Type=simple
           ExecStartPre=/usr/bin/ssh-keygen -A
-          ExecStartPre=/usr/sbin/sshd -t
-          ExecStart=/usr/sbin/sshd -D -e
-          Restart=on-failure
-          RestartSec=3
-
-          [Install]
-          WantedBy=multi-user.target
           EOF
-          sudo ln -sfn /etc/systemd/system/sshd.service \
-            "$R/etc/systemd/system/multi-user.target.wants/sshd.service"
+          sudo ln -sfn "$ssh_unit" "$R/etc/systemd/system/multi-user.target.wants/sshd.service"
+          echo "enabled packaged sshd.service: $ssh_unit"
 
           # Enable units only if their real unit files are present in the image.
           enable_unit() {
@@ -360,20 +360,79 @@ jobs:
             sudo chown root:root "$R/etc/NetworkManager/system-connections/wifi-auto.nmconnection"
           fi
 
-          # Show loaded system services whenever a user logs in on the local tty1.
-          sudo install -d "$R/etc/profile.d"
+          # Show the loaded/active/failed system services directly on physical tty1 at boot.
+          sudo install -d "$R/usr/local/sbin" "$R/etc/systemd/system/multi-user.target.wants" \
+            "$R/etc/systemd/system/getty.target.wants"
+          sudo tee "$R/usr/local/sbin/miatoll-tty1-status" >/dev/null <<'EOF'
+          #!/bin/sh
+          printf '\033[2J\033[H'
+          echo '============================================================'
+          echo '             MIATOLL HEADLESS - SYSTEM STATUS'
+          echo '============================================================'
+          echo
+          echo 'SYSTEMD: LOADED SERVICES'
+          systemctl list-units --type=service --all --no-pager --plain || true
+          echo
+          echo 'SYSTEMD: FAILED UNITS'
+          systemctl --failed --no-pager --plain || true
+          echo
+          echo 'NETWORK INTERFACES'
+          ip -brief address 2>/dev/null || ip addr 2>/dev/null || true
+          echo
+          echo 'SSH SERVICE'
+          systemctl --no-pager --full status sshd.service 2>&1 || true
+          echo
+          echo 'SSH LISTEN SOCKETS'
+          ss -lnt 2>/dev/null | grep -E 'State|:22([[:space:]]|$)' || true
+          echo
+          echo '============================================================'
+          echo 'TTY1 status snapshot; login prompt follows.'
+          echo '============================================================'
+          EOF
+          sudo chmod 0755 "$R/usr/local/sbin/miatoll-tty1-status"
+          sudo chown root:root "$R/usr/local/sbin/miatoll-tty1-status"
+
+          sudo tee "$R/etc/systemd/system/miatoll-tty1-status.service" >/dev/null <<'EOF'
+          [Unit]
+          Description=Show miatoll system status on tty1 during boot
+          After=systemd-journald.service NetworkManager.service sshd.service
+          Wants=NetworkManager.service sshd.service
+          Before=getty@tty1.service
+
+          [Service]
+          Type=oneshot
+          ExecStart=/usr/local/sbin/miatoll-tty1-status
+          StandardInput=tty
+          StandardOutput=tty
+          StandardError=journal
+          TTYPath=/dev/tty1
+          TTYReset=yes
+          TTYVHangup=no
+          TTYVTDisallocate=no
+          RemainAfterExit=yes
+
+          [Install]
+          WantedBy=multi-user.target
+          EOF
+          sudo ln -sfn /etc/systemd/system/miatoll-tty1-status.service \
+            "$R/etc/systemd/system/multi-user.target.wants/miatoll-tty1-status.service"
+
+          # Keep a normal login prompt after the one-shot status screen.
+          for d in usr/lib/systemd/system lib/systemd/system; do
+            if [[ -f "$R/$d/getty@.service" ]]; then
+              sudo ln -sfn "/$d/getty@.service" \
+                "$R/etc/systemd/system/getty.target.wants/getty@tty1.service"
+              break
+            fi
+          done
+
+          # Also show the status again after a user logs in on tty1.
           sudo tee "$R/etc/profile.d/90-show-system-services.sh" >/dev/null <<'EOF'
           #!/bin/sh
           case "$-" in *i*) ;; *) return ;; esac
           [ -t 1 ] || return
-          tty_name="$(tty 2>/dev/null || true)"
-          case "$tty_name" in /dev/tty1|/dev/console) ;; *) return ;; esac
-          command -v systemctl >/dev/null 2>&1 || return
-          printf '\n===== SYSTEMD: LOADED SERVICES =====\n'
-          systemctl list-units --type=service --all --state=loaded --no-pager --plain || true
-          printf '\n===== SYSTEMD: FAILED SERVICES =====\n'
-          systemctl --failed --no-pager --plain || true
-          printf '====================================\n\n'
+          case "$(tty 2>/dev/null)" in /dev/tty1|/dev/console) ;; *) return ;; esac
+          /usr/local/sbin/miatoll-tty1-status
           EOF
           sudo chmod 0644 "$R/etc/profile.d/90-show-system-services.sh"
           sudo chown root:root "$R/etc/profile.d/90-show-system-services.sh"
@@ -415,12 +474,16 @@ jobs:
 
       - name: Download U-Boot SM7125
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
           curl -fL -o out/u-boot-sm7125.img \
             https://github.com/asidko/redmi-note-9s-postmarketos/releases/latest/download/u-boot-sm7125.img
 
       - name: Compress and checksum
         run: |
+          mkdir -p "$GITHUB_WORKSPACE/build-logs"
+          exec > >(tee -a "$GITHUB_WORKSPACE/build-logs/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log") 2>&1
           set -euo pipefail
           cd out
           zstd -T0 -9 --rm xiaomi-miatoll-boot.img
@@ -434,3 +497,41 @@ jobs:
           tag_name: pmos-${{ github.run_number }}
           name: pmOS miatoll headless
           files: out/*
+
+      # Persist the captured workflow output in the repository, even if the build failed.
+      - name: Commit workflow log to repository
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          LOG_DIR="build-logs"
+          LOG_FILE="$LOG_DIR/run-${GITHUB_RUN_NUMBER}-${GITHUB_RUN_ATTEMPT}.log"
+          mkdir -p "$LOG_DIR"
+          {
+            echo
+            echo "===== RUN SUMMARY ====="
+            echo "Run ID: $GITHUB_RUN_ID"
+            echo "Run number: $GITHUB_RUN_NUMBER"
+            echo "Attempt: $GITHUB_RUN_ATTEMPT"
+            echo "Event: $GITHUB_EVENT_NAME"
+            echo "Commit: $GITHUB_SHA"
+            echo "Ref: $GITHUB_REF"
+            echo "Runner: $RUNNER_OS"
+            echo "Finished at (UTC): $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo
+            echo "===== OUTPUT FILES ====="
+            find out -maxdepth 1 -type f -printf '%f %s bytes\n' 2>/dev/null | sort || true
+          } >> "$LOG_FILE"
+
+          # Do not add images, secrets, or generated credentials to the log commit.
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$LOG_FILE"
+          if git diff --cached --quiet; then
+            echo "No log changes to commit."
+            exit 0
+          fi
+          git commit -m "Add workflow log for run ${GITHUB_RUN_NUMBER}"
+          git push origin "HEAD:${GITHUB_REF_NAME}"
