@@ -1,6 +1,9 @@
 name: Build Joyeuse kernel only
 
 on:
+  push:
+    branches:
+      - kernel-only-joyeuse
   workflow_dispatch:
     inputs:
       pmbootstrap_tag:
