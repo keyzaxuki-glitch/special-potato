@@ -1,0 +1,107 @@
+name: Build Joyeuse kernel only
+
+on:
+  push:
+    branches:
+      - kernel-only-joyeuse
+  workflow_dispatch:
+    inputs:
+      pmbootstrap_tag:
+        description: "pmbootstrap version"
+        required: true
+        default: "3.12.1"
+        type: string
+      pmaports_branch:
+        description: "pmaports branch"
+        required: true
+        default: "v26.06"
+        type: string
+      force_rebuild:
+        description: "Force a fresh kernel package build"
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+jobs:
+  kernel:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      PMB_TAG: ${{ inputs.pmbootstrap_tag || '3.12.1' }}
+      PMA_BRANCH: ${{ inputs.pmaports_branch || 'v26.06' }}
+      FORCE_REBUILD: ${{ github.event_name == 'push' || inputs.force_rebuild }}
+
+    steps:
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git python3 python3-pip python3-venv build-essential \
+            sudo curl openssl procps zstd e2fsprogs
+
+      - name: Install pmbootstrap
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$PMB_TAG" https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git
+          cd pmbootstrap
+          printf '#!/bin/sh\nexec python3 "%s/pmbootstrap.py" --config "%s/pmbootstrap.cfg" "$@"\n' "$PWD" "$HOME" \
+            | sudo tee /usr/local/bin/pmbootstrap >/dev/null
+          sudo chmod +x /usr/local/bin/pmbootstrap
+          pmbootstrap --version
+
+      - name: Configure pmaports for miatoll
+        shell: bash
+        run: |
+          set -euo pipefail
+          WORK="$HOME/.local/var/pmbootstrap"
+          mkdir -p "$WORK"
+          echo 8 > "$WORK/version"
+          git clone --depth 1 --branch "$PMA_BRANCH" https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$HOME/pmaports"
+          git -C "$HOME/pmaports" fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+          git -C "$HOME/pmaports" show origin/main:channels.cfg >/dev/null
+          printf '[pmbootstrap]\naports = %s/pmaports\nwork = %s\n' "$HOME" "$WORK" > "$HOME/pmbootstrap.cfg"
+          pmbootstrap config device xiaomi-miatoll
+          pmbootstrap config ui none
+          pmbootstrap config service_manager systemd
+          pmbootstrap config
+
+      - name: Build kernel package only
+        shell: bash
+        run: |
+          set -euo pipefail
+          PACKAGE="linux-postmarketos-qcom-sm7125"
+          if [[ "$FORCE_REBUILD" == "true" ]]; then
+            pmbootstrap build "$PACKAGE" --force
+          else
+            pmbootstrap build "$PACKAGE"
+          fi
+          mkdir -p out
+          mapfile -t APKS < <(find "$HOME/.local/var/pmbootstrap" -type f -name "${PACKAGE}-*.apk" -print)
+          if (( ${#APKS[@]} == 0 )); then
+            echo "Kernel APK not found in pmbootstrap work directory."
+            find "$HOME/.local/var/pmbootstrap" -type f -name '*.apk' -print | tail -n 50
+            exit 1
+          fi
+          for apk in "${APKS[@]}"; do cp "$apk" out/; done
+          (cd out && sha256sum *.apk > SHA256SUMS)
+          ls -lh out
+
+      - name: Upload kernel package
+        uses: actions/upload-artifact@v4
+        with:
+          name: joyeuse-sm7125-kernel-${{ github.run_number }}
+          path: out/*
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: joyeuse-kernel-build-logs-${{ github.run_number }}
+          path: ~/.local/var/pmbootstrap/log.txt
+          if-no-files-found: warn
+          retention-days: 14
