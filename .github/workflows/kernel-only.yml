@@ -30,9 +30,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      PMB_TAG: ${{ inputs.pmbootstrap_tag }}
-      PMA_BRANCH: ${{ inputs.pmaports_branch }}
-      FORCE_REBUILD: ${{ inputs.force_rebuild }}
+      PMB_TAG: ${{ inputs.pmbootstrap_tag || '3.12.1' }}
+      PMA_BRANCH: ${{ inputs.pmaports_branch || 'v26.06' }}
+      FORCE_REBUILD: ${{ github.event_name == 'push' || inputs.force_rebuild }}
 
     steps:
       - name: Install host dependencies
