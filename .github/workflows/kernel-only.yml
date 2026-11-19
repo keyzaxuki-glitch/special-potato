@@ -16,11 +16,6 @@ on:
         required: true
         default: "v26.06"
         type: string
-      force_rebuild:
-        description: "Force a fresh kernel package build"
-        required: true
-        default: true
-        type: boolean
 
 permissions:
   contents: read
@@ -32,7 +27,6 @@ jobs:
     env:
       PMB_TAG: ${{ inputs.pmbootstrap_tag || '3.12.1' }}
       PMA_BRANCH: ${{ inputs.pmaports_branch || 'v26.06' }}
-      FORCE_REBUILD: ${{ github.event_name == 'push' || inputs.force_rebuild }}
 
     steps:
       - name: Install host dependencies
@@ -68,21 +62,34 @@ jobs:
           pmbootstrap config service_manager systemd
           pmbootstrap config
 
-      - name: Build kernel package only
+      - name: Build kernel package only (no force)
         shell: bash
         run: |
           set -euo pipefail
           PACKAGE="linux-postmarketos-qcom-sm7125"
-          if [[ "$FORCE_REBUILD" == "true" ]]; then
-            pmbootstrap build "$PACKAGE" --force
-          else
-            pmbootstrap build "$PACKAGE"
-          fi
+          WORK="$HOME/.local/var/pmbootstrap"
+          LOG="$WORK/log.txt"
+
+          # Stream pmbootstrap's log while the package build runs.
+          touch "$LOG"
+          tail -n 0 -F "$LOG" &
+          TAIL_PID=$!
+          cleanup() {
+            kill "$TAIL_PID" 2>/dev/null || true
+          }
+          trap cleanup EXIT
+
+          echo "Starting normal incremental build (pmbootstrap build, without --force)."
+          pmbootstrap build "$PACKAGE"
+
+          cleanup
+          trap - EXIT
+
           mkdir -p out
-          mapfile -t APKS < <(find "$HOME/.local/var/pmbootstrap" -type f -name "${PACKAGE}-*.apk" -print)
+          mapfile -t APKS < <(find "$WORK" -type f -name "${PACKAGE}-*.apk" -print)
           if (( ${#APKS[@]} == 0 )); then
             echo "Kernel APK not found in pmbootstrap work directory."
-            find "$HOME/.local/var/pmbootstrap" -type f -name '*.apk' -print | tail -n 50
+            find "$WORK" -type f -name '*.apk' -print | tail -n 50
             exit 1
           fi
           for apk in "${APKS[@]}"; do cp "$apk" out/; done
