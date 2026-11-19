@@ -27,9 +27,9 @@ jobs:
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      PMB_TAG: \${{ inputs.pmbootstrap_tag }}
-      PMA_BRANCH: \${{ inputs.pmaports_branch }}
-      FORCE_REBUILD: \${{ inputs.force_rebuild }}
+      PMB_TAG: ${{ inputs.pmbootstrap_tag }}
+      PMA_BRANCH: ${{ inputs.pmaports_branch }}
+      FORCE_REBUILD: ${{ inputs.force_rebuild }}
 
     steps:
       - name: Install host dependencies
@@ -76,20 +76,20 @@ jobs:
             pmbootstrap build "$PACKAGE"
           fi
           mkdir -p out
-          mapfile -t APKS < <(find "$HOME/.local/var/pmbootstrap" -type f -name "\${PACKAGE}-*.apk" -print)
-          if (( \${#APKS[@]} == 0 )); then
+          mapfile -t APKS < <(find "$HOME/.local/var/pmbootstrap" -type f -name "${PACKAGE}-*.apk" -print)
+          if (( ${#APKS[@]} == 0 )); then
             echo "Kernel APK not found in pmbootstrap work directory."
             find "$HOME/.local/var/pmbootstrap" -type f -name '*.apk' -print | tail -n 50
             exit 1
           fi
-          for apk in "\${APKS[@]}"; do cp "$apk" out/; done
+          for apk in "${APKS[@]}"; do cp "$apk" out/; done
           (cd out && sha256sum *.apk > SHA256SUMS)
           ls -lh out
 
       - name: Upload kernel package
         uses: actions/upload-artifact@v4
         with:
-          name: joyeuse-sm7125-kernel-\${{ github.run_number }}
+          name: joyeuse-sm7125-kernel-${{ github.run_number }}
           path: out/*
           if-no-files-found: error
           retention-days: 30
@@ -98,7 +98,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: joyeuse-kernel-build-logs-\${{ github.run_number }}
+          name: joyeuse-kernel-build-logs-${{ github.run_number }}
           path: ~/.local/var/pmbootstrap/log.txt
           if-no-files-found: warn
           retention-days: 14
