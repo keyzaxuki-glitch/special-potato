@@ -67,12 +67,21 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Match the installed Joyeuse release exactly. Git-derived local
+          # version suffixes (for example a trailing "+") must not be added
+          # to the external module vermagic.
+          kernel-source/scripts/config --file kernel-out/.config --disable LOCALVERSION_AUTO
           make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          echo "Effective localversion settings:"
+          grep -E '^(CONFIG_LOCALVERSION=|CONFIG_LOCALVERSION_AUTO=|# CONFIG_LOCALVERSION_AUTO is not set)' kernel-out/.config || true
           release="$(make -s -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
           echo "Built kernel release: $release"
-          test "$release" = "$EXPECTED_KERNELRELEASE"
+          if [ "$release" != "$EXPECTED_KERNELRELEASE" ]; then
+            echo "::error::Kernel release mismatch: expected '$EXPECTED_KERNELRELEASE', got '$release'"
+            exit 1
+          fi
           echo "KERNELRELEASE=$release" >> "$GITHUB_ENV"
 
       - name: Build matching kernel and Module.symvers
