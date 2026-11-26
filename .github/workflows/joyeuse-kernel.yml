@@ -1,0 +1,218 @@
+name: Joyeuse kernel / battery shim
+
+on:
+  workflow_dispatch:
+    inputs:
+      build_mode:
+        description: "Pilih target build"
+        required: true
+        type: choice
+        default: module-only
+        options:
+          - kernel
+          - module-only
+
+permissions:
+  contents: read
+
+concurrency:
+  group: joyeuse-kernel-manual
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build ${{ inputs.build_mode }} for Joyeuse
+    runs-on: ubuntu-24.04
+    timeout-minutes: 180
+    env:
+      KERNEL_REPO: https://github.com/sm7125-mainline/linux.git
+      KERNEL_TAG: sm7125-6.14.7
+      EXPECTED_KERNELRELEASE: 6.14.7-sm7125
+      PMAPORTS_BRANCH: v26.06
+      MODULE_SOURCE: kernel-modules/joyeuse-battery-shim/joyeuse_battery_shim.c
+      BUILD_MODE: ${{ inputs.build_mode }}
+
+    steps:
+      - name: Checkout main repository
+        uses: actions/checkout@v4
+        with:
+          ref: kernel-only-joyeuse
+          persist-credentials: false
+
+      - name: Install ARM64 kernel build dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y \
+            bc bison build-essential dwarves flex gcc-aarch64-linux-gnu \
+            git kmod libelf-dev libssl-dev make pahole perl python3 \
+            rsync file
+
+      - name: Fetch pinned SM7125 kernel source
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$KERNEL_TAG" "$KERNEL_REPO" kernel-source
+          actual_commit="$(git -C kernel-source rev-parse HEAD)"
+          expected_commit="ac499943aba5f6a7dd56d6a88952b939d9f13f6a"
+          echo "Kernel tag: $KERNEL_TAG"
+          echo "Kernel commit: $actual_commit"
+          test "$actual_commit" = "$expected_commit"
+
+      - name: Fetch postmarketOS kernel configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          git clone --depth 1 --branch "$PMAPORTS_BRANCH" \
+            https://gitlab.postmarketos.org/postmarketOS/pmaports.git pmaports
+          CONFIG_FILE="pmaports/device/testing/linux-postmarketos-qcom-sm7125/config-postmarketos-qcom-sm7125.aarch64"
+          test -s "$CONFIG_FILE"
+          mkdir -p kernel-out build-logs out
+          cp "$CONFIG_FILE" kernel-out/.config
+          echo "pmaports commit: $(git -C pmaports rev-parse HEAD)"
+          grep -q '^CONFIG_MODULES=y$' kernel-out/.config
+          grep -q '^CONFIG_POWER_SUPPLY=y$' kernel-out/.config
+
+      - name: Integrate shim into kernel source tree
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s "$MODULE_SOURCE"
+          install -m 0644 "$MODULE_SOURCE" kernel-source/drivers/power/supply/joyeuse_battery_shim.c
+
+          python3 - <<'PY'
+          from pathlib import Path
+
+          kconfig = Path("kernel-source/drivers/power/supply/Kconfig")
+          text = kconfig.read_text()
+          block = """
+          config JOYEUSE_BATTERY_SHIM
+          	tristate "Joyeuse battery status and capacity shim"
+          	depends on POWER_SUPPLY
+          	help
+          	  Expose a battery power_supply for Xiaomi Joyeuse by forwarding
+          	  qcom_qg properties and synthesizing battery status/capacity.
+          """
+          if "config JOYEUSE_BATTERY_SHIM" not in text:
+              marker = "endif # POWER_SUPPLY"
+              if text.count(marker) != 1:
+                  raise SystemExit("Could not uniquely locate POWER_SUPPLY Kconfig section")
+              text = text.replace(marker, block + "\n" + marker)
+              kconfig.write_text(text)
+
+          makefile = Path("kernel-source/drivers/power/supply/Makefile")
+          text = makefile.read_text()
+          entry = "obj-$(CONFIG_JOYEUSE_BATTERY_SHIM) += joyeuse_battery_shim.o"
+          if entry not in text:
+              makefile.write_text(text.rstrip() + "\n" + entry + "\n")
+          PY
+
+          grep -q 'config JOYEUSE_BATTERY_SHIM' kernel-source/drivers/power/supply/Kconfig
+          grep -q 'CONFIG_JOYEUSE_BATTERY_SHIM' kernel-source/drivers/power/supply/Makefile
+
+      - name: Configure and verify exact kernel release
+        shell: bash
+        run: |
+          set -euo pipefail
+          kernel-source/scripts/config --file kernel-out/.config --set-str LOCALVERSION "-sm7125"
+          kernel-source/scripts/config --file kernel-out/.config --disable LOCALVERSION_AUTO
+          kernel-source/scripts/config --file kernel-out/.config --module JOYEUSE_BATTERY_SHIM
+          make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          grep -q '^CONFIG_JOYEUSE_BATTERY_SHIM=m$' kernel-out/.config
+          release="$(make -s -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          echo "Expected kernel release: $EXPECTED_KERNELRELEASE"
+          echo "Actual kernel release:   $release"
+          if [ "$release" != "$EXPECTED_KERNELRELEASE" ]; then
+            echo "::error::Kernel release mismatch: $release"
+            exit 1
+          fi
+          echo "KERNELRELEASE=$release" >> "$GITHUB_ENV"
+
+      - name: Build kernel image, modules and DTBs
+        if: inputs.build_mode == 'kernel'
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j2 Image modules dtbs 2>&1 | tee build-logs/kernel-build.log
+
+      - name: Build kernel modules only (no Image or DTBs)
+        if: inputs.build_mode == 'module-only'
+        shell: bash
+        run: |
+          set -euo pipefail
+          set -o pipefail
+          # Build the modules target to generate the matching Module.symvers
+          # when CONFIG_MODVERSIONS is enabled. No kernel Image or DTBs are built.
+          make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j2 modules 2>&1 | tee build-logs/modules-build.log
+
+      - name: Verify module and prepare artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODULE="kernel-out/drivers/power/supply/joyeuse_battery_shim.ko"
+          test -s "$MODULE"
+          test "$(cat kernel-out/include/config/kernel.release)" = "$EXPECTED_KERNELRELEASE"
+          vermagic="$(modinfo -F vermagic "$MODULE")"
+          echo "Module vermagic: $vermagic"
+          test "${vermagic%% *}" = "$EXPECTED_KERNELRELEASE"
+
+          mkdir -p out/module
+          cp "$MODULE" out/module/
+          modinfo "$MODULE" > out/module/modinfo.txt
+          (cd out/module && sha256sum joyeuse_battery_shim.ko > SHA256SUMS)
+
+          if [ "$BUILD_MODE" = "kernel" ]; then
+            test -s kernel-out/arch/arm64/boot/Image
+            mkdir -p out/kernel
+            cp kernel-out/arch/arm64/boot/Image out/kernel/Image
+            find kernel-out/arch/arm64/boot/dts/qcom -type f \
+              \( -name '*joyeuse*.dtb' -o -name '*miatoll*.dtb' \) \
+              -exec cp --parents {} out/kernel/ \;
+            test -s out/kernel/Image
+          fi
+
+          {
+            echo "Device: Xiaomi Redmi Note 9 Pro Global (Joyeuse / SM7125)"
+            echo "Architecture: aarch64"
+            echo "postmarketOS target: v26.06"
+            echo "Kernel release: $EXPECTED_KERNELRELEASE"
+            echo "Build mode: $BUILD_MODE"
+            echo "Kernel source: $KERNEL_REPO"
+            echo "Kernel tag: $KERNEL_TAG"
+            echo "Kernel commit: $(git -C kernel-source rev-parse HEAD)"
+            echo "pmaports branch: $PMAPORTS_BRANCH"
+            echo "pmaports commit: $(git -C pmaports rev-parse HEAD)"
+            echo "Shim integration: in-tree drivers/power/supply"
+            echo "Build date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Module vermagic: $vermagic"
+            echo "CONFIG_MODVERSIONS: $(grep '^CONFIG_MODVERSIONS=' kernel-out/.config || true)"
+          } > out/build-info.txt
+
+          find out -type f -maxdepth 6 -printf '%p %s bytes\n' | sort
+          cat out/build-info.txt
+          cat out/module/SHA256SUMS
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: joyeuse-${{ inputs.build_mode }}-6.14.7-sm7125-${{ github.run_number }}
+          path: out/**
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: joyeuse-build-logs-${{ github.run_number }}
+          path: build-logs/*.log
+          if-no-files-found: warn
+          retention-days: 14
