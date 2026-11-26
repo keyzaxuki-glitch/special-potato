@@ -119,10 +119,10 @@ jobs:
           kernel-source/scripts/config --file kernel-out/.config --disable LOCALVERSION_AUTO
           kernel-source/scripts/config --file kernel-out/.config --module JOYEUSE_BATTERY_SHIM
           make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
-            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LOCALVERSION= olddefconfig
           grep -q '^CONFIG_JOYEUSE_BATTERY_SHIM=m$' kernel-out/.config
           release="$(make -s -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
-            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LOCALVERSION= kernelrelease)"
           echo "Expected kernel release: $EXPECTED_KERNELRELEASE"
           echo "Actual kernel release:   $release"
           if [ "$release" != "$EXPECTED_KERNELRELEASE" ]; then
@@ -138,7 +138,7 @@ jobs:
           set -euo pipefail
           set -o pipefail
           make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
-            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LOCALVERSION= \
             -j2 Image modules dtbs 2>&1 | tee build-logs/kernel-build.log
 
       - name: Build kernel modules only (no Image or DTBs)
@@ -150,7 +150,7 @@ jobs:
           # Build the modules target to generate the matching Module.symvers
           # when CONFIG_MODVERSIONS is enabled. No kernel Image or DTBs are built.
           make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
-            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- LOCALVERSION= \
             -j2 modules 2>&1 | tee build-logs/modules-build.log
 
       - name: Verify module and prepare artifacts
