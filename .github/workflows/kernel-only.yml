@@ -1,128 +1,133 @@
-name: Build Joyeuse kernel only
+name: Build Joyeuse battery shim module
 
 on:
   push:
     branches:
       - kernel-only-joyeuse
+    paths:
+      - "kernel-modules/joyeuse-battery-shim/**"
+      - ".github/workflows/kernel-only.yml"
   workflow_dispatch:
-    inputs:
-      pmbootstrap_tag:
-        description: "pmbootstrap version"
-        required: true
-        default: "3.12.1"
-        type: string
-      pmaports_branch:
-        description: "pmaports branch"
-        required: true
-        default: "v26.06"
-        type: string
 
 permissions:
   contents: read
 
 jobs:
-  kernel:
+  build-module:
+    name: Build external module for Joyeuse
     runs-on: ubuntu-24.04
     timeout-minutes: 180
     env:
-      PMB_TAG: ${{ inputs.pmbootstrap_tag || '3.12.1' }}
-      PMA_BRANCH: ${{ inputs.pmaports_branch || 'v26.06' }}
+      KERNEL_REPO: https://github.com/sm7125-mainline/linux.git
+      KERNEL_TAG: sm7125-6.14.7
+      EXPECTED_KERNELRELEASE: 6.14.7-sm7125
+      PMAPORTS_BRANCH: v26.06
+      MODULE_DIR: kernel-modules/joyeuse-battery-shim
 
     steps:
-      - name: Install host dependencies
+      - name: Checkout module repository
+        uses: actions/checkout@v4
+
+      - name: Install cross-build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y git python3 python3-pip python3-venv build-essential \
-            sudo curl openssl procps zstd e2fsprogs
+          sudo apt-get install -y \
+            bc bison build-essential dwarves flex gcc-aarch64-linux-gnu \
+            git kmod libelf-dev libssl-dev make pahole perl python3 \
+            rsync
 
-      - name: Install pmbootstrap
+      - name: Fetch pinned SM7125 kernel source
         shell: bash
         run: |
           set -euo pipefail
-          git clone --depth 1 --branch "$PMB_TAG" https://gitlab.postmarketos.org/postmarketOS/pmbootstrap.git
-          cd pmbootstrap
-          printf '#!/bin/sh\nexec python3 "%s/pmbootstrap.py" --config "%s/pmbootstrap.cfg" "$@"\n' "$PWD" "$HOME" \
-            | sudo tee /usr/local/bin/pmbootstrap >/dev/null
-          sudo chmod +x /usr/local/bin/pmbootstrap
-          pmbootstrap --version
+          git clone --depth 1 --branch "$KERNEL_TAG" "$KERNEL_REPO" kernel-source
+          cd kernel-source
+          actual_commit="$(git rev-parse HEAD)"
+          expected_commit="ac499943aba5f6a7dd56d6a88952b939d9f13f6a"
+          echo "Kernel source tag: $KERNEL_TAG"
+          echo "Kernel source commit: $actual_commit"
+          test "$actual_commit" = "$expected_commit"
 
-      - name: Configure pmaports for miatoll
+      - name: Fetch postmarketOS v26.06 kernel configuration
         shell: bash
         run: |
           set -euo pipefail
-          WORK="$HOME/.local/var/pmbootstrap"
-          mkdir -p "$WORK"
-          echo 8 > "$WORK/version"
-          git clone --depth 1 --branch "$PMA_BRANCH" https://gitlab.postmarketos.org/postmarketOS/pmaports.git "$HOME/pmaports"
-          git -C "$HOME/pmaports" fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
-          git -C "$HOME/pmaports" show origin/main:channels.cfg >/dev/null
-          printf '[pmbootstrap]\naports = %s/pmaports\nwork = %s\n' "$HOME" "$WORK" > "$HOME/pmbootstrap.cfg"
-          pmbootstrap config device xiaomi-miatoll
-          pmbootstrap config ui none
-          pmbootstrap config service_manager systemd
-          pmbootstrap config
+          git clone --depth 1 --branch "$PMAPORTS_BRANCH" \
+            https://gitlab.postmarketos.org/postmarketOS/pmaports.git pmaports
+          CONFIG_FILE="pmaports/device/testing/linux-postmarketos-qcom-sm7125/config-postmarketos-qcom-sm7125.aarch64"
+          test -s "$CONFIG_FILE"
+          mkdir -p kernel-out
+          cp "$CONFIG_FILE" kernel-out/.config
+          echo "pmaports commit: $(git -C pmaports rev-parse HEAD)"
+          grep -E '^(CONFIG_LOCALVERSION=|CONFIG_MODULES=|CONFIG_MODVERSIONS=)' kernel-out/.config || true
+          grep -q '^CONFIG_MODULES=y$' kernel-out/.config
+          grep -q '^CONFIG_LOCALVERSION="-sm7125"$' kernel-out/.config
 
-      - name: Bump local kernel package release (no force)
+      - name: Configure and verify kernel release
         shell: bash
         run: |
           set -euo pipefail
-          APKBUILD="$HOME/pmaports/device/testing/linux-postmarketos-qcom-sm7125/APKBUILD"
-          test -f "$APKBUILD"
-          python3 - "$APKBUILD" <<'PY'
-          import pathlib
-          import re
-          import sys
+          make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
+          release="$(make -s -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
+          echo "Built kernel release: $release"
+          test "$release" = "$EXPECTED_KERNELRELEASE"
+          echo "KERNELRELEASE=$release" >> "$GITHUB_ENV"
 
-          path = pathlib.Path(sys.argv[1])
-          text = path.read_text()
-          match = re.search(r"(?m)^pkgrel=(\d+)\s*$", text)
-          if not match:
-              raise SystemExit("Could not find a numeric pkgrel in kernel APKBUILD")
-          old = int(match.group(1))
-          new = old + 1
-          text = text[:match.start(1)] + str(new) + text[match.end(1):]
-          path.write_text(text)
-          print(f"Kernel package pkgrel: {old} -> {new}")
-          PY
-          grep -n '^pkg\(ver\|rel\)=' "$APKBUILD"
-
-      - name: Build kernel package only (no force)
+      - name: Build matching kernel and Module.symvers
         shell: bash
         run: |
           set -euo pipefail
-          PACKAGE="linux-postmarketos-qcom-sm7125"
-          WORK="$HOME/.local/var/pmbootstrap"
-          LOG="$WORK/log.txt"
+          mkdir -p build-logs
+          set -o pipefail
+          make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            -j2 Image modules 2>&1 | tee build-logs/kernel-build.log
+          test -s kernel-out/Module.symvers
+          test -s kernel-out/include/generated/autoconf.h
+          test -s kernel-out/include/config/kernel.release
+          built_release="$(cat kernel-out/include/config/kernel.release)"
+          test "$built_release" = "$EXPECTED_KERNELRELEASE"
 
-          touch "$LOG"
-          tail -n 0 -F "$LOG" &
-          TAIL_PID=$!
-          cleanup() {
-            kill "$TAIL_PID" 2>/dev/null || true
-          }
-          trap cleanup EXIT
-
-          echo "Starting kernel build with locally incremented pkgrel; --force is not used."
-          pmbootstrap build "$PACKAGE"
-
-          cleanup
-          trap - EXIT
-
+      - name: Compile joyeuse_battery_shim.ko
+        shell: bash
+        run: |
+          set -euo pipefail
           mkdir -p out
-          mapfile -t APKS < <(find "$WORK" -type f -name "${PACKAGE}-*.apk" -print)
-          if (( ${#APKS[@]} == 0 )); then
-            echo "Kernel APK not found in pmbootstrap work directory."
-            find "$WORK" -type f -name '*.apk' -print | tail -n 50
-            exit 1
-          fi
-          for apk in "${APKS[@]}"; do cp "$apk" out/; done
-          (cd out && sha256sum *.apk > SHA256SUMS)
-          ls -lh out
+          make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
+            M="$GITHUB_WORKSPACE/$MODULE_DIR" \
+            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
+            modules 2>&1 | tee build-logs/module-build.log
+          MODULE="$MODULE_DIR/joyeuse_battery_shim.ko"
+          test -s "$MODULE"
+          vermagic="$(modinfo -F vermagic "$MODULE")"
+          echo "Module vermagic: $vermagic"
+          test "${vermagic%% *}" = "$EXPECTED_KERNELRELEASE"
+          cp "$MODULE" out/
+          modinfo out/joyeuse_battery_shim.ko > out/modinfo.txt
+          {
+            echo "Device: Xiaomi Redmi Note 9 Pro Global (Joyeuse / SM7125)"
+            echo "Architecture: aarch64"
+            echo "postmarketOS target: v26.06"
+            echo "Kernel release: $EXPECTED_KERNELRELEASE"
+            echo "Kernel source: $KERNEL_REPO"
+            echo "Kernel tag: $KERNEL_TAG"
+            echo "Kernel commit: $(git -C kernel-source rev-parse HEAD)"
+            echo "pmaports branch: $PMAPORTS_BRANCH"
+            echo "pmaports commit: $(git -C pmaports rev-parse HEAD)"
+            echo "Build date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "Module vermagic: $vermagic"
+          } > out/build-info.txt
+          (cd out && sha256sum joyeuse_battery_shim.ko > SHA256SUMS)
+          file out/joyeuse_battery_shim.ko
+          cat out/build-info.txt
+          cat out/SHA256SUMS
 
-      - name: Upload kernel package
+      - name: Upload compiled module
         uses: actions/upload-artifact@v4
         with:
-          name: joyeuse-sm7125-kernel-${{ github.run_number }}
+          name: joyeuse-battery-shim-6.14.7-sm7125-${{ github.run_number }}
           path: out/*
           if-no-files-found: error
           retention-days: 30
@@ -131,7 +136,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: joyeuse-kernel-build-logs-${{ github.run_number }}
-          path: ~/.local/var/pmbootstrap/log.txt
+          name: joyeuse-battery-shim-build-logs-${{ github.run_number }}
+          path: build-logs/*.log
           if-no-files-found: warn
           retention-days: 14
