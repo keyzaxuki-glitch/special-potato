@@ -80,6 +80,7 @@ jobs:
           set -euo pipefail
           test -s "$MODULE_SOURCE"
           install -m 0644 "$MODULE_SOURCE" kernel-source/drivers/power/supply/joyeuse_battery_shim.c
+          : > kernel-source/.scmversion
 
           python3 - <<'PY'
           from pathlib import Path
