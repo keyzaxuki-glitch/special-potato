@@ -131,29 +131,28 @@ jobs:
             echo "::error::Kernel release mismatch: $release"
             exit 1
           fi
-          echo "KERNELRELEASE=$release" >> "$GITHUB_ENV"
+          echo "KREL=$release" >> "$GITHUB_ENV"
 
       - name: Build kernel image, modules and DTBs
         if: inputs.build_mode == 'kernel'
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
           make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             -j2 Image modules dtbs 2>&1 | tee build-logs/kernel-build.log
 
-      - name: Build kernel modules only (no Image or DTBs)
+      - name: Build shim module only (fast, no full kernel)
         if: inputs.build_mode == 'module-only'
         shell: bash
         run: |
           set -euo pipefail
-          set -o pipefail
-          # Build the modules target to generate the matching Module.symvers
-          # when CONFIG_MODVERSIONS is enabled. No kernel Image or DTBs are built.
-          make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
-            ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
-            -j2 modules 2>&1 | tee build-logs/modules-build.log
+          K=(make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out"
+             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-)
+          "${K[@]}" -j2 modules_prepare 2>&1 | tee build-logs/modules-build.log
+          # vmlinux.o tidak dibuat di mode ini, jadi modpost hanya boleh warning
+          KBUILD_MODPOST_WARN=1 "${K[@]}" -j2 \
+            drivers/power/supply/joyeuse_battery_shim.ko 2>&1 | tee -a build-logs/modules-build.log
 
       - name: Verify module and prepare artifacts
         shell: bash
@@ -218,3 +217,4 @@ jobs:
           path: build-logs/*.log
           if-no-files-found: warn
           retention-days: 14
+          
