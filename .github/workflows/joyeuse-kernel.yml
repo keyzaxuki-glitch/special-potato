@@ -27,6 +27,7 @@ jobs:
     env:
       KERNEL_REPO: https://github.com/sm7125-mainline/linux.git
       KERNEL_TAG: sm7125-6.14.7
+      LOCALVERSION: ""
       EXPECTED_KERNELRELEASE: 6.14.7-sm7125
       PMAPORTS_BRANCH: v26.06
       MODULE_SOURCE: kernel-modules/joyeuse-battery-shim/joyeuse_battery_shim.c
