@@ -30,7 +30,7 @@ jobs:
       LOCALVERSION: ""
       EXPECTED_KERNELRELEASE: 6.14.7-sm7125
       PMAPORTS_BRANCH: v26.06
-      MODULE_SOURCE: kernel-modules/joyeuse-battery-shim/joyeuse_battery_shim.c
+      MODULE_DIR: kernel-modules
       BUILD_MODE: ${{ inputs.build_mode }}
 
     steps:
@@ -75,43 +75,65 @@ jobs:
           grep -q '^CONFIG_MODULES=y$' kernel-out/.config
           grep -q '^CONFIG_POWER_SUPPLY=y$' kernel-out/.config
 
-      - name: Integrate shim into kernel source tree
+      - name: Discover and integrate all C modules
         shell: bash
         run: |
           set -euo pipefail
-          test -s "$MODULE_SOURCE"
-          install -m 0644 "$MODULE_SOURCE" kernel-source/drivers/power/supply/joyeuse_battery_shim.c
-          : > kernel-source/.scmversion
+          test -d "$MODULE_DIR"
+          mkdir -p build-logs
 
-          python3 - <<'PY'
+          # Find every .c recursively. Each file is built as one independent .ko.
+          mapfile -d '' C_SOURCES < <(find "$MODULE_DIR" -type f -name '*.c' -print0 | sort -z)
+          if [ "${#C_SOURCES[@]}" -eq 0 ]; then
+            echo "::error::No .c files found under $MODULE_DIR"
+            exit 1
+          fi
+
+          declare -A SEEN=()
+          : > build-logs/module-names.txt
+          for source in "${C_SOURCES[@]}"; do
+            filename="$(basename "$source")"
+            module="${filename%.c}"
+            if [[ ! "$module" =~ ^[A-Za-z0-9_]+$ ]]; then
+              echo "::error::Unsupported module filename: $source (use letters, digits, underscore)"
+              exit 1
+            fi
+            if [[ -n "${SEEN[$module]+x}" ]]; then
+              echo "::error::Duplicate C basename '$module' found under $MODULE_DIR"
+              exit 1
+            fi
+            SEEN[$module]=1
+
+            destination="kernel-source/drivers/power/supply/$filename"
+            if [ -e "$destination" ]; then
+              echo "::error::Kernel source already contains $destination; refusing to overwrite"
+              exit 1
+            fi
+            install -m 0644 "$source" "$destination"
+            printf '%s\n' "$module" >> build-logs/module-names.txt
+            echo "Discovered module: $source -> $module.ko"
+          done
+
+          # Register every discovered source as an external module.
+          # Remove stale custom entries for the same object to avoid duplicate Kbuild targets.
+          python3 - <<'PYMOD'
           from pathlib import Path
+          import re
 
-          kconfig = Path("kernel-source/drivers/power/supply/Kconfig")
-          text = kconfig.read_text()
-          block = """
-          config JOYEUSE_BATTERY_SHIM
-          	tristate "Joyeuse battery status and capacity shim"
-          	depends on POWER_SUPPLY
-          	help
-          	  Expose a battery power_supply for Xiaomi Joyeuse by forwarding
-          	  qcom_qg properties and synthesizing battery status/capacity.
-          """
-          if "config JOYEUSE_BATTERY_SHIM" not in text:
-              marker = "endif # POWER_SUPPLY"
-              if text.count(marker) != 1:
-                  raise SystemExit("Could not uniquely locate POWER_SUPPLY Kconfig section")
-              text = text.replace(marker, block + "\n" + marker)
-              kconfig.write_text(text)
-
+          names = [line.strip() for line in Path("build-logs/module-names.txt").read_text().splitlines() if line.strip()]
           makefile = Path("kernel-source/drivers/power/supply/Makefile")
           text = makefile.read_text()
-          entry = "obj-$(CONFIG_JOYEUSE_BATTERY_SHIM) += joyeuse_battery_shim.o"
-          if entry not in text:
-              makefile.write_text(text.rstrip() + "\n" + entry + "\n")
-          PY
+          for name in names:
+              pattern = rf"(?m)^\s*obj-(?:\$\(CONFIG_[A-Za-z0-9_]+\)|m)\s*\+=\s*{re.escape(name)}\.o\s*\n?"
+              text = re.sub(pattern, "", text)
+          entries = "\n".join(f"obj-m += {name}.o" for name in names)
+          makefile.write_text(text.rstrip() + "\n\n" + entries + "\n")
+          print(f"Registered {len(names)} C module(s) in {makefile}")
+          PYMOD
 
-          grep -q 'config JOYEUSE_BATTERY_SHIM' kernel-source/drivers/power/supply/Kconfig
-          grep -q 'CONFIG_JOYEUSE_BATTERY_SHIM' kernel-source/drivers/power/supply/Makefile
+          : > kernel-source/.scmversion
+          echo "Discovered C modules:"
+          cat build-logs/module-names.txt
 
       - name: Configure and verify exact kernel release
         shell: bash
@@ -119,10 +141,8 @@ jobs:
           set -euo pipefail
           kernel-source/scripts/config --file kernel-out/.config --set-str LOCALVERSION "-sm7125"
           kernel-source/scripts/config --file kernel-out/.config --disable LOCALVERSION_AUTO
-          kernel-source/scripts/config --file kernel-out/.config --module JOYEUSE_BATTERY_SHIM
           make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- olddefconfig
-          grep -q '^CONFIG_JOYEUSE_BATTERY_SHIM=m$' kernel-out/.config
           release="$(make -s -C kernel-source O="$GITHUB_WORKSPACE/kernel-out" \
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- kernelrelease)"
           echo "Expected kernel release: $EXPECTED_KERNELRELEASE"
@@ -142,33 +162,47 @@ jobs:
             ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu- \
             -j2 Image modules dtbs 2>&1 | tee build-logs/kernel-build.log
 
-      - name: Build shim module only (fast, no full kernel)
+      - name: Build all discovered modules only (fast, no full kernel)
         if: inputs.build_mode == 'module-only'
         shell: bash
         run: |
           set -euo pipefail
+          mapfile -t MODULE_NAMES < build-logs/module-names.txt
+          test "${#MODULE_NAMES[@]}" -gt 0
           K=(make -C kernel-source O="$GITHUB_WORKSPACE/kernel-out"
              ARCH=arm64 CROSS_COMPILE=aarch64-linux-gnu-)
           "${K[@]}" -j2 modules_prepare 2>&1 | tee build-logs/modules-build.log
-          # vmlinux.o tidak dibuat di mode ini, jadi modpost hanya boleh warning
-          KBUILD_MODPOST_WARN=1 "${K[@]}" -j2 \
-            drivers/power/supply/joyeuse_battery_shim.ko 2>&1 | tee -a build-logs/modules-build.log
 
-      - name: Verify module and prepare artifacts
+          targets=()
+          for module in "${MODULE_NAMES[@]}"; do
+            targets+=("drivers/power/supply/${module}.ko")
+          done
+          # modules_prepare does not create a complete Module.symvers; unresolved
+          # symbols are reported as warnings in this module-only build mode.
+          KBUILD_MODPOST_WARN=1 "${K[@]}" -j2 "${targets[@]}" 2>&1 | tee -a build-logs/modules-build.log
+
+      - name: Verify all modules and prepare artifacts
         shell: bash
         run: |
           set -euo pipefail
-          MODULE="kernel-out/drivers/power/supply/joyeuse_battery_shim.ko"
-          test -s "$MODULE"
           test "$(cat kernel-out/include/config/kernel.release)" = "$EXPECTED_KERNELRELEASE"
-          vermagic="$(modinfo -F vermagic "$MODULE")"
-          echo "Module vermagic: $vermagic"
-          test "${vermagic%% *}" = "$EXPECTED_KERNELRELEASE"
-
+          mapfile -t MODULE_NAMES < build-logs/module-names.txt
+          test "${#MODULE_NAMES[@]}" -gt 0
           mkdir -p out/module
-          cp "$MODULE" out/module/
-          modinfo "$MODULE" > out/module/modinfo.txt
-          (cd out/module && sha256sum joyeuse_battery_shim.ko > SHA256SUMS)
+          : > out/module/modinfo.txt
+          : > out/module/module-list.txt
+
+          for module in "${MODULE_NAMES[@]}"; do
+            MODULE="kernel-out/drivers/power/supply/${module}.ko"
+            test -s "$MODULE"
+            vermagic="$(modinfo -F vermagic "$MODULE")"
+            echo "Module $module vermagic: $vermagic"
+            test "${vermagic%% *}" = "$EXPECTED_KERNELRELEASE"
+            cp "$MODULE" out/module/
+            modinfo "$MODULE" >> out/module/modinfo.txt
+            printf '%s\n' "$module.ko" >> out/module/module-list.txt
+          done
+          (cd out/module && sha256sum *.ko > SHA256SUMS)
 
           if [ "$BUILD_MODE" = "kernel" ]; then
             test -s kernel-out/arch/arm64/boot/Image
@@ -191,14 +225,16 @@ jobs:
             echo "Kernel commit: $(git -C kernel-source rev-parse HEAD)"
             echo "pmaports branch: $PMAPORTS_BRANCH"
             echo "pmaports commit: $(git -C pmaports rev-parse HEAD)"
-            echo "Shim integration: in-tree drivers/power/supply"
+            echo "Module source directory: $MODULE_DIR"
+            echo "Discovered module count: ${#MODULE_NAMES[@]}"
             echo "Build date UTC: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
-            echo "Module vermagic: $vermagic"
             echo "CONFIG_MODVERSIONS: $(grep '^CONFIG_MODVERSIONS=' kernel-out/.config || true)"
+            echo "Modules: ${MODULE_NAMES[*]}"
           } > out/build-info.txt
 
-          find out -type f -maxdepth 6 -printf '%p %s bytes\n' | sort
+          find out -maxdepth 6 -type f -printf '%p %s bytes\n' | sort
           cat out/build-info.txt
+          cat out/module/module-list.txt
           cat out/module/SHA256SUMS
 
       - name: Upload build artifacts
@@ -217,4 +253,3 @@ jobs:
           path: build-logs/*.log
           if-no-files-found: warn
           retention-days: 14
-          
